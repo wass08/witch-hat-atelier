@@ -1,0 +1,488 @@
+:root {
+	--ink: #e8dcc8;
+	--dim: #9d8fa8;
+	--rune: #c79bff;
+	--ember: #ffb163;
+	--panel: rgba(14, 9, 20, 0.72);
+	--edge: rgba(199, 155, 255, 0.22);
+	font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+	margin: 0;
+	height: 100%;
+	background: #07050a;
+	color: var(--ink);
+	overflow: hidden;
+}
+
+#stage {
+	position: fixed;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	display: block;
+	touch-action: none;
+	cursor: crosshair;
+}
+
+#hud {
+	position: fixed;
+	inset: 0;
+	pointer-events: none;
+	padding: 22px 26px;
+	display: grid;
+	grid-template-rows: auto 1fr auto;
+}
+
+.plate {
+	background: var(--panel);
+	border: 1px solid var(--edge);
+	border-radius: 10px;
+	padding: 10px 14px;
+	backdrop-filter: blur(7px);
+	box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+.title { font-size: 15px; letter-spacing: 0.16em; text-transform: uppercase; }
+.title small { display: block; margin-top: 4px; font-size: 11px; letter-spacing: 0.06em; color: var(--dim); text-transform: none; }
+
+header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+
+.keys { font-size: 11px; color: var(--dim); line-height: 1.9; text-align: right; }
+.keys kbd {
+	font-family: inherit;
+	border: 1px solid var(--edge);
+	border-radius: 4px;
+	padding: 1px 6px;
+	color: var(--ink);
+}
+
+footer { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; }
+
+.grimoire { display: flex; gap: 10px; align-items: stretch; }
+.sigil { text-align: center; width: 56px; opacity: 0.5; transition: opacity 0.25s, transform 0.25s; }
+.sigil.bound { opacity: 1; }
+.sigil.lit { opacity: 1; transform: translateY(-3px); }
+.sigil.lit svg path { filter: drop-shadow(0 0 7px var(--rune)); }
+.sigil.bound.lit svg path { filter: drop-shadow(0 0 8px var(--ember)); }
+.sigil.lit span { color: var(--ink); }
+.sigil svg { width: 32px; height: 32px; display: block; margin: 0 auto 3px; }
+.sigil svg path { fill: none; stroke: var(--rune); stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+.sigil.bound svg path { stroke: var(--ember); }
+.sigil span { font-size: 9px; letter-spacing: 0.06em; color: var(--dim); text-transform: uppercase; display: block; white-space: nowrap; }
+
+#verdict { min-width: 230px; text-align: right; }
+#verdict .line { font-size: 16px; letter-spacing: 0.05em; }
+#verdict .line.ok { color: var(--ember); }
+#verdict .line.miss { color: var(--rune); }
+#verdict .line.reading { opacity: 0.72; font-style: italic; }
+#verdict .meter { height: 3px; margin-top: 8px; background: rgba(255, 255, 255, 0.12); border-radius: 3px; overflow: hidden; }
+#verdict .meter i { display: block; height: 100%; width: 0; background: var(--ember); transition: width 0.35s ease; }
+#verdict small { color: var(--dim); font-size: 11px; }
+
+/* ---- the title screen ---------------------------------------------------
+ *
+ * The loading screen doubles as the way in. Browsers will not play audio until
+ * the page has been interacted with, and this experience has an ambient track
+ * and synthesised spell audio that both want to be running the moment the room
+ * appears — so it opens on a door rather than walking straight in. The click
+ * that opens it is the gesture that unlocks the sound.
+ *
+ * Loading runs behind the gate rather than before it, so the room is finished
+ * the instant the door opens. The door itself only appears once it is.
+ *
+ * **There is no progress bar. The sigil's stroke is the progress bar.** Every
+ * shape in it carries `pathLength="1"`, so one custom property — `--p`, set by
+ * `Hud.progress` — drives `stroke-dashoffset` on all ten at once and the whole
+ * figure inks in together. When it closes, it catches light: that is the single
+ * orchestrated moment on this screen, and the door arrives on the back of it.
+ *
+ * Everything here is namespaced `boot-`, and the palette is scoped to `#boot`
+ * rather than `:root`, because two names would otherwise collide with the HUD's:
+ * `.sigil` is already the grimoire card in the footer, and `--ink` already means
+ * the parchment the HUD writes *in* rather than the dark it is written *on*.
+ */
+
+#boot {
+	--boot-ink: #0a0912;
+	--boot-ink-deep: #04030a;
+	--boot-parchment: #e9dfc9;
+	--boot-parchment-dim: #a79c86;
+	--boot-candle: #e0a356;
+	--boot-rose: #c97b8e;
+
+	position: fixed;
+	inset: 0;
+	display: grid;
+	place-items: center;
+	overflow: hidden;
+	/* Deliberately no background of its own. `.boot-sky` is opaque and `inset: 0`,
+	 * so it is the backdrop — which lets the backdrop leave while the plate stays,
+	 * and that separation is the whole exit. Fading `#boot` as one sheet took the
+	 * title away with the darkness: measured, 94% of it was gone by 800 ms, when
+	 * the camera had covered 6% of its travel, so the two never shared the frame. */
+	color: var(--boot-parchment);
+	font-family: 'Cormorant Garamond', 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+	z-index: 10;
+}
+
+.boot-veil { position: absolute; inset: 0; pointer-events: none; }
+
+/* ---- the way through ----------------------------------------------------
+ *
+ * Not a fade. The camera behind this screen is dollying 2.2 m forward into the
+ * seat at the same moment (`CameraRig.arrive`), and a title that merely
+ * dissolves in front of a moving room reads as two unrelated things happening
+ * at once. So the plate travels too: it scales past the viewer while the room
+ * comes at them, and for about a second you are inside both.
+ *
+ * Three things leave, in this order, and the order is the effect:
+ *
+ * 1. **The backdrop, first and quickly** (0.6 s). The room has to be visible
+ *    behind the title before the title goes, or there is nothing to arrive into.
+ * 2. **The plate, travelling** (1.25 s). It scales past the viewer on an
+ *    accelerating curve while the camera comes forward, and only starts fading a
+ *    third of the way in — so for most of a second the words are over the room,
+ *    both moving. That overlap is the whole trick.
+ * 3. **The sigil, further and faster than the words** (to 2.6×). It is the thing
+ *    you pass *through*, so it has to leave frame first and leave it wide.
+ *
+ * All of it finishes inside 1.35 s, well short of the camera's 2.2 s, so what
+ * you watch the shot settle into is the room and not the last of an overlay. */
+#boot.gone { pointer-events: none; }
+
+#boot.gone .boot-veil {
+	opacity: 0;
+	transition: opacity 0.6s ease-out;
+}
+
+#boot.gone .boot-inner {
+	transform: translateY(-3vh) scale(1.6);
+	opacity: 0;
+	transition: transform 1.25s cubic-bezier(0.45, 0, 0.7, 0), opacity 0.85s ease-in 0.35s;
+}
+
+#boot.gone .boot-sigil {
+	transform: scale(2.6);
+	opacity: 0;
+	transition: transform 1.25s cubic-bezier(0.5, 0, 0.65, 0), opacity 0.9s ease-in 0.3s;
+}
+
+/* Not merely invisible. The grain repaints three times a second and fourteen
+ * fireflies animate forever, and an opacity of zero stops none of it — left as
+ * it was, the title screen would go on costing the room frames for the whole
+ * session. `Hud` sets this once the fade has finished. */
+#boot.spent { display: none; }
+
+/* ---- atmosphere: dusk wash, vignette, grain ---------------------------- */
+
+.boot-sky {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	background:
+		radial-gradient(120% 90% at 50% 108%, rgba(201, 123, 142, 0.2) 0%, transparent 55%),
+		radial-gradient(90% 70% at 50% 42%, rgba(74, 58, 114, 0.34) 0%, transparent 70%),
+		linear-gradient(180deg, var(--boot-ink-deep) 0%, var(--boot-ink) 55%, #0b0715 100%);
+}
+
+/* Kills the flat rectangle of black. */
+.boot-vignette {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	background: radial-gradient(70% 60% at 50% 46%, transparent 40%, rgba(0, 0, 0, 0.72) 100%);
+}
+
+/* The cheapest way to stop a dark screen looking like a void. Transform-only, so
+ * the compositor owns it and it does not compete with the load on the main
+ * thread — which matters, because the whole room decodes and every shader
+ * compiles behind this screen. */
+.boot-grain {
+	position: absolute;
+	inset: -50%;
+	pointer-events: none;
+	opacity: 0.16;
+	mix-blend-mode: overlay;
+	background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/></filter><rect width='200' height='200' filter='url(%23n)'/></svg>");
+	animation: boot-grain-shift 1.1s steps(3) infinite;
+}
+
+@keyframes boot-grain-shift {
+	0% { transform: translate(0, 0); }
+	33% { transform: translate(-2%, 1%); }
+	66% { transform: translate(1%, -2%); }
+}
+
+/* Answers the drifting orbs already in the room, so the door is lit by the same
+ * things as what is behind it. */
+.boot-firefly {
+	position: absolute;
+	width: 3px;
+	height: 3px;
+	border-radius: 50%;
+	background: var(--boot-candle);
+	box-shadow: 0 0 10px 3px rgba(224, 163, 86, 0.55);
+	opacity: 0;
+	pointer-events: none;
+	animation: boot-drift linear infinite;
+}
+
+@keyframes boot-drift {
+	0% { opacity: 0; transform: translate(0, 0) scale(0.7); }
+	18% { opacity: 0.85; }
+	70% { opacity: 0.5; }
+	100% { opacity: 0; transform: translate(var(--dx), -46vh) scale(1.1); }
+}
+
+/* ---- the plate --------------------------------------------------------- */
+
+.boot-inner {
+	position: relative;
+	width: min(92vw, 34rem);
+	text-align: center;
+	/* Optical centring: a little above true middle, where the eye expects it. */
+	transform: translateY(-3vh);
+}
+
+/* ---- the sigil, which is also the loading bar -------------------------- */
+
+.boot-sigil {
+	--p: 0;
+	width: clamp(9rem, 20vh, 13rem);
+	height: clamp(9rem, 20vh, 13rem);
+	margin: 0 auto 2.4rem;
+	display: block;
+	overflow: visible;
+}
+
+.boot-sigil path,
+.boot-sigil circle,
+.boot-sigil line {
+	fill: none;
+	stroke: var(--boot-parchment);
+	stroke-width: 1.1;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	stroke-dasharray: 1;
+	stroke-dashoffset: calc(1 - var(--p));
+	opacity: 0.62;
+	transition: stroke-dashoffset 0.5s linear;
+}
+
+.boot-sigil .halo {
+	stroke: var(--boot-candle);
+	stroke-width: 8;
+	opacity: 0;
+	filter: blur(9px);
+	stroke-dashoffset: 0;
+	transition: opacity 1.4s ease;
+}
+
+/* The ink closes, and the figure catches light. */
+#boot.sealed .boot-sigil path,
+#boot.sealed .boot-sigil circle,
+#boot.sealed .boot-sigil line {
+	opacity: 0.95;
+	stroke: var(--boot-candle);
+	transition: stroke 1.2s ease, opacity 1.2s ease;
+}
+
+#boot.sealed .boot-sigil .halo { opacity: 0.5; }
+
+/* ---- type -------------------------------------------------------------- */
+
+.boot-inner h1 {
+	font-size: clamp(1.9rem, 4.4vw, 3.1rem);
+	font-weight: 300;
+	letter-spacing: 0.34em;
+	/* Recentres a line whose last letter carries tracking it does not need. */
+	text-indent: 0.34em;
+	line-height: 1.1;
+	margin: 0;
+	color: var(--boot-parchment);
+	text-shadow: 0 0 34px rgba(201, 123, 142, 0.28);
+}
+
+.boot-tagline {
+	margin: 1.1rem 0 0;
+	font-size: clamp(1rem, 1.5vw, 1.15rem);
+	font-style: italic;
+	font-weight: 300;
+	color: var(--boot-parchment-dim);
+	letter-spacing: 0.02em;
+}
+
+/* ---- the door, and the wait that precedes it --------------------------- */
+
+/* Both children sit in the same grid cell so the swap is a cross-fade in one
+ * place rather than a reflow: the status line holds the space, the door takes
+ * it, and the sound note below never moves. */
+.boot-gate {
+	display: grid;
+	margin-top: 3.2rem;
+	place-items: center;
+}
+
+.boot-gate > * { grid-area: 1 / 1; }
+
+#boot-enter {
+	display: inline-block;
+	padding: 0.85rem 3.2rem;
+	font-family: inherit;
+	font-size: 1rem;
+	font-weight: 400;
+	letter-spacing: 0.28em;
+	text-indent: 0.28em;
+	color: var(--boot-parchment);
+	background: transparent;
+	border: 1px solid rgba(233, 223, 201, 0.22);
+	cursor: pointer;
+	transition:
+		opacity 0.9s ease, transform 0.9s ease, visibility 0.9s,
+		border-color 0.4s ease, letter-spacing 0.4s ease, color 0.4s ease;
+}
+
+/* Hidden until the sigil is finished — nothing to click, nothing shown. It keeps
+ * its box either way, which is what the shared grid cell is measured from. */
+#boot-enter[disabled] {
+	opacity: 0;
+	visibility: hidden;
+	transform: translateY(6px);
+	pointer-events: none;
+}
+
+#boot-enter:hover,
+#boot-enter:focus-visible {
+	border-color: rgba(224, 163, 86, 0.75);
+	color: #fff3de;
+	letter-spacing: 0.36em;
+	text-indent: 0.36em;
+	outline: none;
+	box-shadow: 0 0 26px -6px rgba(224, 163, 86, 0.5), inset 0 0 26px -14px rgba(224, 163, 86, 0.7);
+}
+
+#boot-enter:focus-visible {
+	border-color: var(--boot-candle);
+	box-shadow: 0 0 0 2px rgba(224, 163, 86, 0.35);
+}
+
+/* What the screen says while it works. Goes as the door arrives — "Ready." next
+ * to a button that says so is the same sentence twice. */
+#boot-msg {
+	margin: 0;
+	/* It shares a grid cell with the door and is painted after it, so without this
+	 * a faded-out "Ready." — 39×19 px of invisible text — sits exactly over the
+	 * middle of the button and eats the click. Opacity hides a thing; it does not
+	 * get it out of the way. */
+	pointer-events: none;
+	font-size: 0.95rem;
+	font-style: italic;
+	font-weight: 300;
+	color: rgba(167, 156, 134, 0.8);
+	letter-spacing: 0.02em;
+	transition: opacity 0.6s ease;
+}
+
+#boot.sealed #boot-msg { opacity: 0; }
+
+/* …unless it is carrying bad news, which outranks the door. */
+#boot.failed #boot-msg { opacity: 1; }
+.fatal { color: #ff8f6b; font-style: normal; }
+
+/* A whisper, not a plate: it is advice, and it has no business competing with
+ * the one thing on this screen that is a decision. */
+.boot-sound {
+	margin: 1.6rem 0 0;
+	font-size: 0.9rem;
+	color: rgba(167, 156, 134, 0.72);
+	letter-spacing: 0.03em;
+	opacity: 0;
+	transition: opacity 1.1s ease 0.3s;
+}
+
+#boot.sealed .boot-sound { opacity: 1; }
+
+.boot-sound svg {
+	width: 0.85em;
+	height: 0.85em;
+	vertical-align: -0.05em;
+	margin-right: 0.45em;
+	stroke: var(--boot-candle);
+	fill: none;
+	stroke-width: 1.6;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+/* Scoped to `#boot`: the room behind it has its own motion to answer for. */
+@media (prefers-reduced-motion: reduce) {
+	#boot, #boot * { animation: none !important; transition-duration: 0.01ms !important; }
+	.boot-firefly { display: none; }
+}
+
+/* ---- music toggle -------------------------------------------------------
+ *
+ * A plate like the others, but square and interactive. The icon carries the
+ * state rather than a label: the two arcs are the sound leaving the speaker, so
+ * they are what goes away when it is off, and a stroke takes their place. That
+ * reads at a glance from across the desk in a way "MUSIC: OFF" does not.
+ */
+/* Keys and button as one right-hand group, so the header stays a two-column
+ * layout however many controls end up in it — with three flex children the title
+ * was being squeezed until it wrapped. */
+.controls { display: flex; align-items: flex-start; gap: 10px; }
+
+.music {
+	/* The overlay is `pointer-events: none` so a drag anywhere over it reaches the
+	 * canvas and draws — which is the right default for a HUD sitting on top of a
+	 * scene you steer with the mouse, and which every child inherits. This is the
+	 * one element that has to opt back in, and only this one: re-enabling it any
+	 * higher up would start swallowing strokes that began over a plate. */
+	pointer-events: auto;
+	flex: none;
+	display: grid;
+	place-items: center;
+	width: 38px;
+	height: 38px;
+	padding: 0;
+	color: var(--ink);
+	cursor: pointer;
+	transition: color 0.25s ease, border-color 0.25s ease;
+}
+
+.music:hover { border-color: rgba(255, 255, 255, 0.28); }
+.music:focus-visible { outline: 1px solid var(--rune); outline-offset: 2px; }
+
+.music svg {
+	width: 17px;
+	height: 17px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.7;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+/* Both halves are always in the markup; only one is ever drawn, so the swap is
+ * a transition rather than a re-render. */
+.music .cross { opacity: 0; transition: opacity 0.2s ease; }
+.music .waves { opacity: 1; transition: opacity 0.2s ease; }
+.music.off { color: var(--dim); }
+.music.off .cross { opacity: 1; }
+.music.off .waves { opacity: 0; }
+
+/* Present for screen readers, absent for everyone else. */
+.sr {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}

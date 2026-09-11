@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Witch Hat Atelier — Sigil Casting</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet" />
+		<link rel="stylesheet" href="/src/ui/style.css" />
+	</head>
+	<body>
+		<canvas id="stage"></canvas>
+		<div id="hud"></div>
+		<div id="boot">
+			<!-- The backdrop, as one layer, so it can leave on its own timing: it drops
+			     out early to reveal the room while the plate is still on screen. The
+			     fireflies are appended in here by `Hud` for the same reason — an
+			     animation beats a transition, so the only thing that will fade them
+			     is an ancestor's opacity. -->
+			<div class="boot-veil">
+				<div class="boot-sky"></div>
+				<div class="boot-grain"></div>
+				<div class="boot-vignette"></div>
+			</div>
+			<main class="boot-inner">
+				<!-- Every shape carries pathLength="1", so one `--p` draws them all
+				     together. `Hud.progress` sets it: the sigil's stroke *is* the
+				     loading bar. -->
+				<svg class="boot-sigil" viewBox="0 0 120 120" aria-hidden="true">
+					<circle class="halo" cx="60" cy="60" r="44" pathLength="1" />
+					<circle cx="60" cy="60" r="44" pathLength="1" />
+					<circle cx="60" cy="60" r="35" pathLength="1" style="opacity: 0.3" />
+					<path d="M60 21 L93 79 L27 79 Z" pathLength="1" />
+					<path d="M60 99 L27 41 L93 41 Z" pathLength="1" style="opacity: 0.42" />
+					<circle cx="60" cy="60" r="9" pathLength="1" />
+					<line x1="60" y1="4" x2="60" y2="16" pathLength="1" />
+					<line x1="60" y1="104" x2="60" y2="116" pathLength="1" />
+					<line x1="4" y1="60" x2="16" y2="60" pathLength="1" />
+					<line x1="104" y1="60" x2="116" y2="60" pathLength="1" />
+				</svg>
+
+				<h1>Witch Hat Atelier</h1>
+				<p class="boot-tagline">Draw a sigil on the parchment, and it casts.</p>
+
+				<!-- One cell, two occupants. The status line holds the space while the
+				     room loads and the door takes it over when the room is ready, so
+				     nothing below moves at the moment of the swap. -->
+				<div class="boot-gate">
+					<button id="boot-enter" type="button" disabled>Enter the atelier</button>
+					<p id="boot-msg">Lighting the candles…</p>
+				</div>
+
+				<p class="boot-sound">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /></svg>
+					Best with sound on.
+				</p>
+			</main>
+		</div>
+		<script type="module" src="/src/main.ts"></script>
+	</body>
+</html>

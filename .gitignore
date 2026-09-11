@@ -1,0 +1,9 @@
+node_modules
+dist
+.DS_Store
+
+# Screen recordings of the scene, not assets it loads, and too large for git.
+/*.mp4
+
+# Local tooling config.
+.claude/
