@@ -194,6 +194,37 @@ export class StrokeRecorder {
 	}
 
 	/**
+	 * True while the nib is down *on the sheet* — {@link writing}, less the part
+	 * of a stroke that has run off the edge.
+	 *
+	 * The two differ because a stroke keeps following the pointer past the page
+	 * (the recogniser needs that overshoot), and `activePoint` goes with it out
+	 * across the desk. That is still writing as far as the sigil is concerned, but
+	 * there is no paper under it, so anything that is the *sound* of paper — the
+	 * quill's scratch — must stop there. A trace is always on the page.
+	 */
+	get inking(): boolean {
+
+		return this.tracing || ( this.drawing && this.onPage );
+
+	}
+
+	/**
+	 * Which stroke the nib is on; changes the moment a new one begins.
+	 *
+	 * For whoever measures the pen by differencing `activePoint` between frames:
+	 * a trace lifts and lands in one frame, so the point jumps from the end of
+	 * one stroke to the start of the next without `writing` ever going false, and
+	 * that jump read as speed is a burst of noise across a gap the pen never
+	 * touched. A change here is the pen-lift that the position alone cannot show.
+	 */
+	get stroke(): number {
+
+		return this.strokeId;
+
+	}
+
+	/**
 	 * Whether the quill is being held over the parchment — the same answer the
 	 * last `onHover` reported, readable by anyone who missed it.
 	 *

@@ -322,6 +322,21 @@ are all the same kernel under different uniforms. Particles respawn smeared alon
 the distance the emitter covered that frame, so a fast-moving source leaves a rope
 of flame instead of a bead chain.
 
+**The sprite is a spark, not a puff.** Five emitter knobs, all defaulting to the
+old behaviour, are what turned the fire from a cloud of translucent orange dots
+into something that reads as an explosion. `stretch` turns each quad to face the
+way it is moving on screen and lengthens it by that many seconds of travel — a
+motion-blur exposure — so the fast leaders of a burst draw long streaks and the
+slow body stays a dot, with every speed in the pool visible at once. `square`
+blends the soft disc towards a hard-edged box, which with `stretch` is a bar.
+`fadeSize` makes a particle die by shrinking rather than by fading, so a shower
+keeps its contrast to the last frame instead of dissolving into a wash. `opacity`
+is the alpha the material used to bake in at 0.22: at 1 the core is solid and
+`glow` means what it says. And `inherit` hands a newborn a share of the emitter's
+own velocity, so the wake behind a shot flies on behind it like a comet's tail
+instead of dropping off the arc. Fireball and the ink motes use all of them;
+lightning, the rune and the ward are untouched.
+
 Note that particles move *only* while their field is stepped: an effect that stops
 stepping with particles still alive leaves them frozen in the air, which is why
 `Lightning` and `RuneAwakening` both keep running for a beat after they finish.
@@ -470,9 +485,15 @@ compiles away to nothing, silently. It has to be inside an `Fn`.
   shower it was lighting. A candle emits 7 through a sprite a few centimetres
   across; the core is a 15 cm sphere seen from two metres, so the same number covers
   thirty times the screen. It sits at 4.1 now, and the halo comes from the embers
-  instead: `glow` 16 at the detonation against 9 before, with `sparkle` blending the
-  sprite towards a four-pointed glint, because the round blob is the silhouette of a
-  puff of smoke and no amount of tuning the motion argues with a silhouette.
+  instead: solid (`opacity` 1), hard-edged (`square` 0.65) and emitting at 4.5 at
+  the detonation — a little over what the old 16 put on screen through the 0.22
+  alpha the material used to bake in, and every core over the bloom. What makes it
+  a burst rather than a shower is `stretch` 0.05: every spark is a bar smeared
+  along its own velocity, so the leaders `spray` throws far draw long streaks, the
+  slow body stays a scatter of squares, and the plume `updraft` sends up arcs over
+  as a fan of lines. The palette runs deep red through red-orange to a yellow that
+  the material takes on to near-white at the throw, so the shower is yellow-white
+  at the centre and red rain at the edges.
 
   Both aimed spells hit the **centre of the target painted on the dummy**, and
   that point is derived rather than written down: the decal's centre is `u = v =
@@ -694,6 +715,17 @@ compiles away to nothing, silently. It has to be inside an `Fn`.
   decay, so a few oscillators cost less than shipping a wav. The context is created
   lazily on the first pointer-down, which is what browsers require before a page
   may make noise.
+- **`audio/InkSfx.ts`** — the page's own sounds, synthesised on `Chime`'s context
+  and master (so the welcome click unlocks them too). The quill: looped paper hiss
+  plus a baked bed of fibre ticks, both through a 6 kHz lowpass, with level,
+  brightness and tick density following nib speed on the sheet (`recorder.inking`,
+  differenced `activePoint`), silent when the nib rests, hovers or runs off the
+  page. The burn: a lowpassed brown-noise bed, a thin sizzle and Poisson crackle
+  pops, all following `InkMotes.burn`, plus a one-shot whoosh when a recognised
+  sigil ignites. Every level is re-set each frame with a quarter-second fall to
+  silence behind it, so a backgrounded tab cannot leave a scratch hissing, and the
+  looped sources are stopped after 0.6 s of quiet. Loudness and character are the
+  constants at the top of the file; `INK_SFX_LEVEL` trims the lot.
 
 #### A cage, not a dome
 

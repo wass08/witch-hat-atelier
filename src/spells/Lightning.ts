@@ -137,7 +137,11 @@ export class Lightning {
 
 		this.sparks = new ParticleField( renderer, scene, {
 			count: 3072,
-			palette: [ 0x0a1030, 0x2f6bff, 0xbfe0ff ],
+			// The hot end is a saturated sky blue rather than the near-white it was:
+			// at the emission these sparks now run at, AgX takes a pale blue the rest
+			// of the way to white on its own, and a crackle of white dots is not
+			// electric. The material still whitens the very youngest; see `whiteHot`.
+			palette: [ 0x0a1030, 0x2f6bff, 0x7fb8ff ],
 		} );
 
 		this.muzzle = new PointLight( 0x9fc4ff, 0, 2.5, 2 );
@@ -209,33 +213,48 @@ export class Lightning {
 
 			this.sparks.configure( {
 				position: this.to,
-				spawnRate: 0.6 * ( 1 - t ),
+				// Rationed and front-loaded. At 0.6 the whole pool woke inside two
+				// frames and three thousand hot squares over one bullseye stacked into
+				// a white puffball; this is a few hundred on the first frame, thinning
+				// as the strike does, so every spark can be seen as one.
+				spawnRate: 0.12 * ( 1 - t ) ** 2,
 				radius: 0.08,
-				speed: 2.6,
+
+				// Faster, and uneven: a few leaders thrown well clear of the impact
+				// draw the crackle's reach, the slow majority stays at the bullseye.
+				speed: 3.4,
+				spray: 0.8,
 				lifeSpan: 0.5,
-				size: 0.018,
+				// A 4.5 mm core is a quarter of the old width. Holding that size until
+				// it shrinks away keeps the impact a crackle through its short life;
+				// the default growth would turn the dying sparks back into blue puffs.
+				size: 0.0045,
+				growth: 0,
 				drift: new Vector3( 0, 0.2, 0 ),
 				buoyancy: - 2.4,
 				damping: 1.6,
 
-				// Well over the bloom threshold, and falling with the strike. Sparks
-				// off an arc are the brightest thing this spell throws — and 10 was
-				// not throwing them like it. A particle's additive contribution is its
-				// tint times its heat ramp times the 0.22 the sprite's alpha carries,
-				// so 10 puts a spark's core barely twice over a bloom that does not
-				// open until 1.15: enough to be lit, not enough to halo. Against the
-				// candle burning at 7 a few centimetres from the page, the brightest
-				// thing in the room was a candle. 18 is where the arc's own sparks
-				// glow rather than merely being visible.
-				glow: 18 * ( 1 - t * 0.5 ),
+				// Full opacity replaces the old 0.22, so the smaller core needs less
+				// emission than 18 to bloom on its own. At glow 10 the hot palette's
+				// linear channels times glow are roughly 5–10 before the heat ramp;
+				// even half-white newborns stay in that range. The strike still fades,
+				// while whiteHot 0.5 leaves blue in the core and its faint local halo
+				// instead of sending every newborn all the way to warm white.
+				glow: 12 * ( 1 - t * 0.5 ),
+				whiteHot: 0.15,
+				halo: 0.04,
+				haloSize: 6,
 
-				// Harder than the fireball's 0.6, because this is the one pool in the
-				// room where nothing is on fire. An ember is a hot *thing* and can
-				// afford to read as matter; an electrical spark is a point of light and
-				// nothing else, and the round sprite — a soft radial falloff, which is
-				// the silhouette of a puff of smoke — is what made these read as blue
-				// confetti. The glint has spikes and a hard core.
-				sparkle: 0.75,
+				// A hard square supplies the tiny bright head; 25 ms of motion gives
+				// it direction, capped at five widths so the fastest sparks stay short
+				// dashes. Shrinking at full opacity keeps the last sparks distinct
+				// rather than leaving a broad translucent wash around the impact.
+				square: 1,
+				sparkle: 0,
+				stretch: 0.035,
+				streakMax: 5,
+				fadeSize: 1,
+				opacity: 1,
 
 				// Faster than the fireball's flicker, and shallower. What is being
 				// described is an electrical crackle rather than a coal breathing.

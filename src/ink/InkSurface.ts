@@ -74,14 +74,20 @@ const INK_TAU = INK_LIFETIME / Math.log( 1 / INK_VISIBLE );
  * put the motes 2.1 s behind the moment the line was seen to go, which reads as
  * the sparks arriving late for something that already happened.
  *
- * At 30% the line is unmistakably dissolving but still there, so the motes come
- * off it rather than off blank parchment.
+ * At 30% the line is unmistakably dissolving but still there — and that was
+ * still late. Watched frame by frame through a burn, a stroke visibly thinned
+ * and was gone before its sparks arrived: the eye does not wait for the line to
+ * be *mostly* gone, it sees the moment it *starts* to go, and reads the sparks
+ * as following the fade rather than causing it. At 90% the mark is handed over
+ * as it leaves full black, so the fire is on ink that is still there and the
+ * fade opens up behind it — the sparks are burning the line away, not arriving
+ * after it. (At the burn's rate that is about four frames earlier.)
  *
  * The constant below is the exact inverse of the material's `smoothstep`
  * (`y = x²(3 - 2x)`), so the two cannot drift: change the darkness and the ink
  * level follows.
  */
-const VANISH_AT = 0.3;
+const VANISH_AT = 0.9;
 const VANISH_X = 0.5 - Math.sin( Math.asin( 1 - 2 * VANISH_AT ) / 3 );
 
 const INK_FAINT = INK_VISIBLE + VANISH_X * ( INK_SOLID - INK_VISIBLE );
@@ -181,6 +187,18 @@ export interface VanishPoint {
 	 * ribbon comes out at the same density however fast the front is moving.
 	 */
 	span: number;
+	/**
+	 * Where this frame's run of line began, in page space: the first mark eaten
+	 * after the last pen-lift. `out` is where it ended.
+	 *
+	 * On a jump the emitter has to be *placed* rather than dragged, and it used to
+	 * be placed at the end. But the span of that frame is all the line between
+	 * here and there — at the start of a burn, a couple of centimetres of it — so
+	 * the density it bought was dropped on the one point the emitter landed on, and
+	 * came out as a white knot of a few hundred sparks. Placed here instead, the
+	 * ordinary smear lays them along the line they came off.
+	 */
+	from: Vector2;
 }
 
 /** Marks consumed before the list is compacted. */
@@ -250,7 +268,7 @@ export class InkSurface {
 	private continuing = false;
 	/** Ink-age of the most recent mark, so the fade can be run to its true end. */
 	private lastMark = - INK_LIFETIME;
-	private readonly vanished: VanishPoint = { jumped: false, span: 0 };
+	private readonly vanished: VanishPoint = { jumped: false, span: 0, from: new Vector2() };
 
 	/** Frames since anything on the page last changed. */
 	private settled = Number.MAX_SAFE_INTEGER;
@@ -404,6 +422,15 @@ export class InkSurface {
 			// straight line between the first and last mark would report the shortcut.
 			// Pen-lifts are not ground covered, so a `first` mark starts a new run.
 			if ( found && ! mark.first ) span += Math.hypot( mark.x - lastX, mark.y - lastY );
+
+			// A run starts at the frame's first mark and again after every pen-lift;
+			// the span restarts with it, since only the last run is smeared over.
+			if ( ! found || mark.first ) {
+
+				this.vanished.from.set( mark.x, mark.y );
+				span = 0;
+
+			}
 
 			lastX = mark.x;
 			lastY = mark.y;

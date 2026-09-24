@@ -1,4 +1,5 @@
 import { Color, Scene, Vector2, Vector3, type WebGPURenderer } from 'three/webgpu';
+import { IDLE_GLOW } from '../config';
 import { ParticleField, type EmitterState } from '../spells/ParticleField';
 import type { InkSurface } from './InkSurface';
 
@@ -31,11 +32,19 @@ const JUMP = 0.4;
 /**
  * Coldest → hottest. The ink is dark, its ghost is not.
  *
- * The hot end is warm now rather than pale lilac: these are embers off burning
- * paper, and the violet stays in the middle where it reads as the ink's own
- * colour rather than as the temperature of the thing that is burning.
+ * Fire, end to end: these are embers off burning paper, and an ember is red
+ * when it is nearly out, orange while it burns and yellow-white the moment it
+ * leaves the page. The old ramp kept the ink's violet in the middle, which made
+ * the trail read as the ink's ghost rather than as something alight — and a
+ * page going up should look like it is going up. A recognised spell still takes
+ * the ramp over; see {@link InkMotes.setColor}.
+ *
+ * The top is an orange-gold rather than a yellow. The material already whitens
+ * the first few percent of every life, and the bloom and AgX pull anything hot
+ * further towards white, so a yellow top left the whole trail reading cream; one
+ * step down the ramp and the sparks come out gold, with the colour still there.
  */
-const IDLE_PALETTE: [ number, number, number ] = [ 0x1a1026, 0x8a5ad0, 0xffd2a0 ];
+const IDLE_PALETTE: [ number, number, number ] = [ 0x5a0a06, 0xff5a14, 0xff9a30 ];
 
 /**
  * Spawn rate at the head of a sweep, and after it has been running a while.
@@ -59,20 +68,30 @@ const SPAWN_COOL = 0.011;
  * The kernel smears each frame's spawns from the emitter's previous position to
  * its current one, so the particles land along the line that was eaten rather
  * than piling up at the end of it.
+ *
+ * Both down (from 3.4 and 0.55) now that each spark is a hot core rather than a
+ * pale square: additive sparks that cross the bloom stack, and at the old rates a
+ * frame's worth of them landing together whited out into one blob. Fewer and
+ * brighter keeps them countable.
  */
-const SPAWN_PER_SPAN = 3.4;
-const SPAWN_MAX = 0.55;
+const SPAWN_PER_SPAN = 2.6;
+const SPAWN_MAX = 0.4;
 
 /**
  * Emission at the head of a sweep, and once the stroke behind it has aged.
  *
- * Both raised, and the floor raised much harder — 1.4 is under the 1.15 the bloom
- * opens at, so the tail of every trail was a dim smear that lit nothing. Ink
- * leaving a page is not smoke coming off it: the whole trail should be over the
- * threshold and blooming, with the head simply hotter than the tail.
+ * Tripled from 1.3 / 1.0 along with the sprite going to about a third of its
+ * old width. The material's colour is `tint × (heat × 1.15 + 0.2) × glow`, so a
+ * newborn spark's core sits near 4.7 at the head and 3.4 at the tail — both well
+ * over the 1.15 the bloom opens at, so every spark blooms by itself instead of
+ * only where a wide pale square happened to overlap its neighbours.
+ *
+ * Not higher: past about 5 AgX rolls an orange core to white and the trail stops
+ * being on fire and starts being glitter. The colour has to survive in the core,
+ * because the halo around it is too faint to carry it alone.
  */
-const GLOW_HOT = 8.5;
-const GLOW_COOL = 4.0;
+const GLOW_HOT = 3.5;
+const GLOW_COOL = 2.5;
 
 /**
  * Seconds of unbroken sweeping over which the emission cools from hot to cool.
@@ -105,6 +124,17 @@ const SWEEP_COOL = 1.1;
 const FLARE_TIME = 1.15;
 
 /**
+ * The share of `SPAWN_PER_SPAN` the flare keeps while the burn drags the front.
+ *
+ * The flare *sets* the spawn rate rather than taking the higher of its own and
+ * the trail's. The burn eats the sigil in a handful of frames, so the trail's
+ * span term was pinned at its ceiling the whole time — and under a max() the
+ * flare could only ever add to that. Half the trail's density is what reads as a
+ * swarm of separate lights rather than a solid line of them.
+ */
+const FLARE_SPAN = 0.5;
+
+/**
  * The flare, as an override of the resting emitter.
  *
  * `buoyancy` and `drift` are uniforms the kernel applies to *every* live
@@ -123,15 +153,48 @@ const FLARE: Partial<EmitterState> = {
 	// This is a per-frame chance that any *dead* particle comes back, so it has to
 	// be read against the pool and the window, not against the old figure. The
 	// sweep lasts about 0.85 s — `INK_BURN_SECONDS` plus `LINGER` — which is some
-	// 51 frames, so the share of a 700-strong pool that wakes is
-	// `1 - (1 - rate)^51`. At the flare's old 0.32 that is essentially all of it:
-	// 700 lights, which is a wall. At 0.01 it is about a third, and a pentagram
-	// comes apart into points you can follow one at a time.
+	// 51 frames, so the share of the pool that wakes is `1 - (1 - rate)^51`. At
+	// the flare's old 0.32 that is essentially all of it — a wall. At 0.01 it is
+	// about a third: some 560 lights of the 1,400, enough to read as the sigil
+	// going up and few enough to follow one at a time.
 	spawnRate: 0.01,
 
-	// Fewer, so each one can afford to be brighter and bigger.
-	glow: 12,
-	size: 0.012,
+	// Tiny and hot: a couple of pixels at the writing framing, with a core near
+	// 4.7 at birth so each one blooms by itself. Glow is about double the old 1.7
+	// while the sprite went from 5 mm to under 3 — the energy per light is roughly
+	// what it was, but concentrated where the bloom can see it. At 5 and over the
+	// spell's colour went white in AgX; at this the fireball's burn is gold and
+	// the bolt's is blue.
+	glow: 3.5,
+	size: 0.0028,
+
+	// Solid, hard-edged and burning out by size rather than by alpha — the same
+	// treatment as the trail, so the flare is the trail going up rather than a
+	// different effect switching on. Fully solid now that the sprites are small
+	// enough not to stack into a lamp; the half-solid 0.55 was what made the old
+	// flare a sheet of pale squares with no light in them.
+	square: 1,
+	fadeSize: 1,
+	opacity: 1,
+
+	// Barely any. These rise at a couple of decimetres a second, so the old 0.05
+	// stood every one on end as a vertical bar — a firefly is a point. Capped at
+	// twice its width for the one the turbulence throws.
+	stretch: 0.02,
+	streakMax: 2,
+
+	// The per-particle bloom, and the one part of it that carries the colour. At
+	// 0.14 × a core of about 4.7 the halo peaks near 0.65 — under the threshold,
+	// so it adds a soft tinted glow rather than more white — and six widths is
+	// still only a dozen-odd pixels, cheap for a pool this size.
+	halo: 0.14,
+	haloSize: 6,
+
+	// Born in the spell's colour, not white. The flare is the one pool here whose
+	// ramp is the ink's hue rather than fire, and the ink colours are pale already
+	// — the bolt's is a sky blue — so the material's white-hot birth left a
+	// lightning sigil going up as white sparks with blue ones behind them.
+	whiteHot: 0,
 
 	// Nearly flat, where the resting trail is fully focused. A firefly is not an
 	// ember: it does not cool as it ages, it holds its light and then goes out.
@@ -143,9 +206,9 @@ const FLARE: Partial<EmitterState> = {
 	twinkle: 0.55,
 	twinkleRate: 2.4,
 
-	// Mostly back to round. A firefly is a soft light; the glint that stops the
-	// drawing trail reading as smoke would make the flare read as tinsel.
-	sparkle: 0.3,
+	// No glint: the hard square is doing that job now, and a star on a bar reads
+	// as neither.
+	sparkle: 0,
 
 	// None. Falling paper dust is what gives the quiet drawing phase its depth;
 	// among fireflies it just reads as something dying.
@@ -183,6 +246,85 @@ const FLARE: Partial<EmitterState> = {
 	updraft: 0,
 };
 
+/**
+ * The burning edge: a second pool, sat exactly on the fade front.
+ *
+ * The motes above are what the line *sheds* — they leave, arc, drift, rise — and
+ * however many of them there are, the place they were born is empty a frame
+ * later. That emptiness is what read as the sparks and the fade being out of
+ * step: nothing stayed on the edge to say *this* is where the ink is going. This
+ * pool does. Its embers barely move and live about a quarter of a second, so
+ * they pile up along the few centimetres of line the front has just crossed and
+ * die there, and the fade opens up behind them: the line reads as burning away
+ * from its edge rather than vanishing with some sparks nearby.
+ *
+ * A separate field because it is a separate population — one configuration per
+ * field per frame, and these want the opposite of the motes on nearly every
+ * axis. It costs one small dispatch and one draw.
+ */
+const EDGE_COUNT = 2048;
+
+/**
+ * Edge embers per page-width of line eaten, as a spawn chance per frame against a
+ * mostly-dead pool (they live a quarter-second, so it is), and its floor and
+ * ceiling. A burn eats a pentagram at about 0.06 page-widths a frame, which is
+ * some 110 embers a frame along it; a stroke fading on its own clock eats a
+ * tenth of that and gets the floor.
+ */
+const EDGE_PER_SPAN = 0.9;
+const EDGE_MIN = 0.006;
+const EDGE_MAX = 0.12;
+
+const EDGE: Partial<EmitterState> = {
+	shape: 1,
+	// On the line, not around it: a nib's width either side.
+	radius: 0.004,
+
+	// A shiver, not a throw. What leaves the page is the motes' job; these stay
+	// on the edge long enough to be seen there and then go out where they were.
+	speed: 0.035,
+	swirl: 0.01,
+	lifeSpan: 0.3,
+	drift: new Vector3( 0, 0.04, 0 ),
+	buoyancy: 0.1,
+	damping: 3,
+
+	// Two-to-three pixels, a wide spread so the edge is ragged, not a bead chain.
+	size: 0.0026,
+	spread: 0.75,
+	growth: 0,
+
+	// Hotter than the motes: the edge is the hottest thing on the page, and its
+	// embers are too short-lived to stack into a lamp. Every one of them blooms,
+	// cooling to red over its quarter-second so the edge has a hot side (where
+	// the front is) and a dying side (where it has been).
+	//
+	// No white at birth, and well under the 6 first tried: hundreds of these
+	// stacked additively over pale parchment go white on their own, and a cream
+	// edge is the colour of nothing burning. The colour is what says fire; the
+	// stack supplies all the white it needs where it is densest.
+	glow: 3.8,
+	glowFocus: 0.8,
+	whiteHot: 0,
+	halo: 0.08,
+	haloSize: 5,
+
+	square: 1,
+	sparkle: 0,
+	stretch: 0,
+	fadeSize: 1,
+	opacity: 1,
+	snap: 1,
+	twinkle: 0.45,
+	twinkleRate: 9,
+
+	dust: 0,
+	turbulence: 0,
+	spray: 0,
+	updraft: 0,
+	inherit: 0,
+};
+
 const EMITTER: EmitterState = {
 	position: new Vector3(),
 
@@ -217,7 +359,15 @@ const EMITTER: EmitterState = {
 	// Motes are shed, not puffed: they come off the line at the size they stay.
 	// `growth` is the single strongest smoke tell in the system — a particle that
 	// swells over its life is a puff by definition — so it is off entirely.
-	size: 0.0055,
+	//
+	// Wide spread, so the trail is a scatter of a few big sparks among many small
+	// ones rather than a ribbon of one size.
+	//
+	// A quarter-ish of the old 6 mm: two or three pixels at the writing framing,
+	// where the old figure was a pale square big enough to read as a shape. A
+	// spark is a point of light, and it is the bloom around it — not the sprite —
+	// that should give it size on screen.
+	size: 0.0024,
 	growth: 0,
 	spread: 0.7,
 
@@ -244,10 +394,27 @@ const EMITTER: EmitterState = {
 	turbulenceScale: 0.9,
 	turbulenceFriction: 1.4,
 
-	// A glint, not a blob. The round sprite was the single biggest reason the trail
+	// A bar, not a blob. The round sprite was the single biggest reason the trail
 	// read as smoke: no amount of tuning the motion escapes a silhouette that is a
-	// soft circle.
-	sparkle: 1,
+	// soft circle. It used to be the four-pointed glint; now it is a hard square
+	// smeared along its own arc, which is what a spark thrown off a page leaves
+	// on the eye — and the square keeps a solid core inside the bloom where the
+	// glint's spikes dissolved into it. Fully hard now: at a couple of pixels the
+	// soft edge was only ever a grey fringe, and the halo below does its job.
+	sparkle: 0,
+	square: 1,
+
+	// Seconds of travel each spark is smeared over. At `speed` 0.19 that is some
+	// 7 mm of smear on a sprite now under 3 mm wide, which `streakMax` below holds
+	// to a short dash at launch, shortening to a dot as gravity takes the speed
+	// off — so the arc is written into the sprite as well as into the motion.
+	stretch: 0.04,
+
+	// Solid, and burning out by size. The alpha fade was the "transparent orange
+	// circle" look in one number: a spark that fades in place is a light dimming,
+	// where one that shrinks is a thing going out.
+	fadeSize: 1,
+	opacity: 1,
 
 	// A little, not the flare's amount. Enough that the trail is alive rather than
 	// a static spray, well short of the pulse that makes the cast read as fireflies.
@@ -270,6 +437,32 @@ const EMITTER: EmitterState = {
 	// See above: shed, not thrown.
 	spray: 0,
 	updraft: 0,
+
+	// The emitter here is the fade front, not a thing that moves; what it sweeps
+	// along is the line, and the motes come off that line, not along it.
+	inherit: 0,
+
+	// The per-particle glow. A core of 3.4–4.7 crosses the bloom, but a sprite
+	// this small hands the bloom so little energy that the glow around it barely
+	// shows; this draws it inside the quad instead — about 0.4 at its peak, under
+	// the threshold, so it is a warm haze round each spark rather than more white.
+	// Five widths is still only a dozen pixels, so the fill cost is nothing.
+	halo: 0.1,
+	haloSize: 5,
+
+	// A dash, never a line: three and a half widths at most. The old default of 14
+	// was a comet tail on a spark that should read as a point.
+	streakMax: 3.5,
+
+	// Fire while writing: the hottest instant of a spark is white, which is what
+	// makes it incandescent rather than orange paint.
+	whiteHot: 1,
+
+	// On screen the frame it is shed. The birth ramp is a share of the life, and
+	// on a mote that lives a second — let alone a firefly at 3.4 — that share was
+	// several frames of nothing, which put every spark visibly behind the fade it
+	// came off.
+	snap: 1,
 };
 
 /**
@@ -296,13 +489,15 @@ const REST = { ...EMITTER, drift: EMITTER.drift.clone() };
 export class InkMotes {
 
 	private readonly field: ParticleField;
+	private readonly edge: ParticleField;
+	private readonly edgeState: Partial<EmitterState> = { ...EDGE, position: new Vector3() };
 	private readonly page = new Vector2();
 	private readonly at = new Vector3();
+	private readonly start = new Vector3();
 	private readonly previous = new Vector3();
 	private readonly palette: [ number, number, number ] = [ ...IDLE_PALETTE ];
 	private readonly scratch = new Color();
-	private readonly violet = new Color( IDLE_PALETTE[ 1 ] );
-	private readonly white = new Color( 0xffffff );
+	private readonly hsl = { h: 0, s: 0, l: 0 };
 	private colored = - 1;
 
 	/** Seconds of spawning left, and of stepping owed after that. */
@@ -319,10 +514,15 @@ export class InkMotes {
 	/** Page-widths of line the fade front ate this frame. */
 	private span = 0;
 
+	/** Smoothed {@link burn}. */
+	private heat = 0;
+
 	constructor( renderer: WebGPURenderer, scene: Scene, private readonly ink: InkSurface ) {
 
 		this.field = new ParticleField( renderer, scene, {
-			count: 700,
+			// Doubled from 700: the rates below are shares of the dead pool, so this
+			// doubles the trail and the flare alike without touching their shape.
+			count: 1400,
 			palette: IDLE_PALETTE,
 			// Compiled in for this field only. It is a few octaves of noise per
 			// particle per frame, and it is what makes an ember wander rather than
@@ -331,12 +531,32 @@ export class InkMotes {
 		} );
 		this.field.configure( EMITTER );
 
+		this.edge = new ParticleField( renderer, scene, {
+			count: EDGE_COUNT,
+			palette: IDLE_PALETTE,
+		} );
+		this.edge.configure( this.edgeState );
+
 	}
 
 	/** True while there is anything left to step. */
 	get active(): boolean {
 
 		return this.alive > 0;
+
+	}
+
+	/**
+	 * How hard the page is burning right now, 0..1 — for anything that wants to
+	 * follow the fire without knowing how it is made, the paper-burn sound first.
+	 *
+	 * Rises the moment the fade front starts eating line and scales with how much
+	 * it ate, holds up through a flare, and falls away over a fraction of a second
+	 * once nothing is going; never a step, so a listener does not have to smooth it.
+	 */
+	get burn(): number {
+
+		return this.heat;
 
 	}
 
@@ -350,12 +570,42 @@ export class InkMotes {
 
 		this.colored = hex;
 
-		// The ramp stays a ramp whatever it is handed: the middle keeps some of the
-		// ink's own violet and the top is pushed towards white, so the motes still
-		// cool from bright to dark over their life. Flattening all three to the
-		// spell's colour reads as a decal rather than as embers.
-		this.palette[ 1 ] = this.scratch.setHex( hex ).lerp( this.violet, 0.45 ).getHex();
-		this.palette[ 2 ] = this.scratch.setHex( hex ).lerp( this.white, 0.55 ).getHex();
+		// The page's resting glow is the ink's violet, but the motes do not follow
+		// it there: a line being eaten is on fire whatever colour the ink was, and
+		// the fire ramp is what it sheds until the page has read a spell into it.
+		if ( hex === IDLE_GLOW ) {
+
+			this.palette[ 0 ] = IDLE_PALETTE[ 0 ];
+			this.palette[ 1 ] = IDLE_PALETTE[ 1 ];
+			this.palette[ 2 ] = IDLE_PALETTE[ 2 ];
+
+			return;
+
+		}
+
+		// The ramp stays a ramp whatever it is handed: one hue, from nearly out
+		// through a saturated middle to the spell's own colour at the top — so the
+		// motes still cool from bright to dark over their life. Flattening all
+		// three to the spell's colour reads as a decal rather than as embers.
+		//
+		// Built in HSL, and never whiter than the ink. The spells' ink colours are
+		// pastels (the bolt's is 0x8fc4ff), the material already whitens every
+		// newborn spark, and AgX whitens anything hot — so the old top, the ink
+		// pushed a further 55% towards white, came out as plain white squares with
+		// no spell in them. Saturation is floored and the top's lightness capped
+		// so the colour survives all three.
+		const { h, s, l } = this.scratch.setHex( hex ).getHSL( this.hsl );
+		const rich = Math.max( s, 0.9 );
+
+		this.palette[ 0 ] = this.scratch.setHSL( h, rich, 0.1 ).getHex();
+		this.palette[ 1 ] = this.scratch.setHSL( h, rich, 0.5 ).getHex();
+		//
+		// Capped at 0.55, down from 0.66. Over pale parchment a burn front is a
+		// thousand additive sparks stacked on a light ground, and at 0.66 the stack
+		// went cream: the fireball's gold read as white fire, which is no colour at
+		// all. At 0.55 the stack still whitens at its hottest, and the colour holds
+		// everywhere else.
+		this.palette[ 2 ] = this.scratch.setHSL( h, rich, Math.min( l, 0.55 ) ).getHex();
 
 	}
 
@@ -395,7 +645,15 @@ export class InkMotes {
 			// player never wrote.
 			if ( ! this.placed || vanished.jumped || this.at.distanceTo( this.previous ) > JUMP ) {
 
-				this.field.teleport( this.at );
+				// Placed where this frame's run began, not where it ended, and then
+				// dragged to the end like any other frame — so the line eaten on a
+				// jump frame is smeared along, not piled on one point. See
+				// `VanishPoint.from`.
+				this.ink.fromInkUV( vanished.from, this.start );
+				this.start.y += LIFT;
+
+				this.field.teleport( this.start );
+				this.edge.teleport( this.start );
 
 				// A jump means the front has left one stroke and landed on the head of
 				// the next. That is a new line being eaten, so it starts hot.
@@ -452,11 +710,35 @@ export class InkMotes {
 
 		}
 
+		// Line eaten per second, against what a burn eats (a pentagram's couple of
+		// page-widths in two-thirds of a second): an ordinary fade walking a stroke
+		// lands around a third, the burn itself pins it. Fast up, slower down.
+		const eating = this.spawning > 0 ? Math.min( 1, 0.25 + ( this.span / Math.max( dt, 1e-3 ) ) / 3 ) : 0;
+		const target = Math.max( eating, this.flaring > 0 ? Math.min( 1, this.flaring / FLARE_TIME + 0.3 ) : 0 );
+
+		this.heat += ( target - this.heat ) * Math.min( 1, dt * ( target > this.heat ? 18 : 5 ) );
+
 		if ( this.alive <= 0 ) return;
 
 		this.field.recolour( this.palette, dt * 7 );
 		this.field.configure( EMITTER );
 		this.field.step( dt );
+
+		// The edge follows the motes' emitter exactly — same point, same smear from
+		// last frame's point — and burns at the density of line eaten, flare or not:
+		// how fast the edge is travelling is the only thing it answers to.
+		const edge = this.edgeState;
+
+		edge.position!.copy( EMITTER.position );
+		// Nothing when the front is not moving, for the same reason as the flare's:
+		// a stalled edge would pile every ember onto one point.
+		edge.spawnRate = this.spawning > 0 && this.span > 0
+			? Math.min( EDGE_MAX, Math.max( EDGE_MIN, this.span * EDGE_PER_SPAN ) )
+			: 0;
+
+		this.edge.recolour( this.palette, dt * 7 );
+		this.edge.configure( edge );
+		this.edge.step( dt );
 
 	}
 
@@ -482,12 +764,18 @@ export class InkMotes {
 		// been consumed the emitter stops moving, and spawning past that point piles
 		// every remaining firefly onto the last place it stood — which is invisible
 		// in a dense shower and obvious in a sparse one.
+		//
+		// And only while it is *moving*. A frame that ate no line — the front
+		// pausing on a pen-down, or lingering on the last mark once the sigil is
+		// gone — has nowhere to put a firefly but the one point it is sat on, and a
+		// one-stroke pentagram starts and ends on the same point: at a flat rate
+		// that point collected a hundred-odd lights and burned as a white knot
+		// through the whole flare.
 		if ( this.spawning > 0 ) {
 
-			EMITTER.spawnRate = Math.max(
-				EMITTER.spawnRate,
-				Math.min( SPAWN_MAX, ( FLARE.spawnRate ?? 0 ) + this.span * SPAWN_PER_SPAN * 0.35 ),
-			);
+			EMITTER.spawnRate = this.span > 0
+				? Math.min( SPAWN_MAX, ( FLARE.spawnRate ?? 0 ) + this.span * SPAWN_PER_SPAN * FLARE_SPAN )
+				: 0;
 
 		}
 		EMITTER.glow = blend( GLOW_COOL, FLARE.glow ?? GLOW_HOT );
@@ -506,6 +794,14 @@ export class InkMotes {
 		EMITTER.twinkle = blend( REST.twinkle, FLARE.twinkle ?? REST.twinkle );
 		EMITTER.sparkle = blend( REST.sparkle, FLARE.sparkle ?? REST.sparkle );
 		EMITTER.twinkleRate = FLARE.twinkleRate ?? REST.twinkleRate;
+		EMITTER.square = blend( REST.square, FLARE.square ?? REST.square );
+		EMITTER.stretch = blend( REST.stretch, FLARE.stretch ?? REST.stretch );
+		EMITTER.opacity = blend( REST.opacity, FLARE.opacity ?? REST.opacity );
+		EMITTER.fadeSize = blend( REST.fadeSize, FLARE.fadeSize ?? REST.fadeSize );
+		EMITTER.halo = blend( REST.halo, FLARE.halo ?? REST.halo );
+		EMITTER.haloSize = blend( REST.haloSize, FLARE.haloSize ?? REST.haloSize );
+		EMITTER.streakMax = blend( REST.streakMax, FLARE.streakMax ?? REST.streakMax );
+		EMITTER.whiteHot = blend( REST.whiteHot, FLARE.whiteHot ?? REST.whiteHot );
 		EMITTER.drift.y = blend( REST.drift.y, FLARE.drift?.y ?? REST.drift.y );
 
 		this.alive = Math.max( this.alive, EMITTER.lifeSpan );

@@ -13,6 +13,7 @@ import {
 	Fn,
 	If,
 	abs,
+	atan,
 	clamp,
 	cos,
 	cross,
@@ -22,6 +23,7 @@ import {
 	instancedArray,
 	max,
 	mix,
+	modelViewMatrix,
 	mx_fractal_noise_vec3,
 	pow,
 	sin,
@@ -33,6 +35,7 @@ import {
 	uv,
 	vec2,
 	vec3,
+	vec4,
 } from 'three/tsl';
 
 import { transparentMRT } from '../scene/gbuffer';
@@ -221,6 +224,122 @@ export interface EmitterState {
 	 * Defaults to 0, so every spell keeps the round sprite it was tuned against.
 	 */
 	sparkle: number;
+
+	/**
+	 * Smears each sprite along its own velocity, in seconds of travel.
+	 *
+	 * The quad is turned to face the way the particle is going on screen and
+	 * lengthened by how far it would move in this many seconds — a motion-blur
+	 * exposure, in effect — so the fast leaders of a burst draw long streaks and
+	 * the slow body behind them stays a dot. That spread of lengths is most of
+	 * what separates a fire *explosion* from a cloud of embers: the eye reads the
+	 * length of a streak as its speed, and a blast has every speed at once. Each
+	 * particle carries its own multiplier on top, so two neighbours thrown at the
+	 * same speed still leave different marks.
+	 *
+	 * Only the screen-plane part of the velocity counts — a spark flying straight
+	 * at the camera has nothing to smear — and the length is capped at
+	 * {@link STREAK_MAX_ASPECT} widths. At 0 nothing is turned or stretched.
+	 */
+	stretch: number;
+
+	/**
+	 * Blends the sprite from the soft disc towards a hard-edged square, 0..1.
+	 *
+	 * A soft radial falloff is a puff whatever colour it is; a square with an
+	 * edge is a *thing*. Combined with `stretch` the square becomes a bar, which
+	 * is the shape of a spark trail. Under bloom the hard edge is what keeps a
+	 * bright core inside the halo instead of dissolving into it.
+	 */
+	square: number;
+
+	/**
+	 * How much of a particle's dying is done by shrinking rather than by fading,
+	 * 0..1.
+	 *
+	 * At 0 the alpha rides the old puff curve — up over the first tenth, then a
+	 * long fade — and the size holds. At 1 the alpha stays solid for the whole
+	 * life and the *size* goes instead: full while the particle is hot, then
+	 * smoothly to nothing. A spark that fades in place reads as a light dimming;
+	 * one that shrinks reads as a thing burning out, and a shower of them keeps
+	 * its contrast to the last frame instead of turning into a translucent wash.
+	 */
+	fadeSize: number;
+
+	/**
+	 * The sprite's alpha at full mask. This used to be a constant 0.22 baked into
+	 * the material, which is why nothing in a field ever bloomed on its own — the
+	 * additive contribution is `tint × glow × opacity`, and a fifth of the glow
+	 * was gone before the bloom ever saw it. At 1 the core is solid and `glow`
+	 * means what it says.
+	 */
+	opacity: number;
+
+	/**
+	 * How much of the emitter's own motion a newborn particle sets off with, 0..1.
+	 *
+	 * The kernel already knows where the emitter was last frame, for smearing
+	 * spawns along its path; this hands the same displacement over as a velocity.
+	 * At 0 a spark shed from a moving source is dropped where it is shed, so the
+	 * wake behind a shot is a column of sparks falling from the arc. At 1 every
+	 * spark leaves at the shot's full speed and the wake is a comet's — sparks
+	 * flying on behind it and only then falling away, which with `stretch` is a
+	 * fan of streaks rather than a stack of dots.
+	 */
+	inherit: number;
+
+	/**
+	 * A soft glow drawn around each particle inside its own quad, 0..1 — the
+	 * halo's alpha at its centre, falling off cubically to nothing at the edge.
+	 * Small numbers: the colour it multiplies is the HDR `glow`, so 0.06 on a
+	 * spark at `glow` 14 is a halo of about 0.8, under the bloom.
+	 *
+	 * The bloom in `Post` opens at 1.15 and is deliberately gentle, because the room
+	 * is tuned against it. A spark a few pixels across that is hot enough to cross
+	 * it blooms, but the bloom's widest mips spread so little of a tiny sprite's
+	 * energy that the halo is barely there — which is how a shower of small solid
+	 * squares ends up reading as confetti. Drawing the halo here instead puts it
+	 * exactly where it belongs, at a strength each effect chooses, without touching
+	 * the room: the core stays over the threshold and blooms for real, the halo is
+	 * the same colour at a few percent and stays under it.
+	 *
+	 * Costs fill rate, not draws — the quad grows by {@link EmitterState.haloSize}.
+	 * At 0 the quad is exactly the sprite it was.
+	 */
+	halo: number;
+	/** How far the halo reaches, as a multiple of the core's width. */
+	haloSize: number;
+
+	/**
+	 * The longest a streak may get, as a multiple of its width. See `stretch`.
+	 *
+	 * Fourteen was the old constant, which is right for a lone leader and wrong for
+	 * a pool: nine thousand fourteen-wide bars are a wall of matchsticks. A spark
+	 * trail wants a short dash with a bright head, not a line.
+	 */
+	streakMax: number;
+
+	/**
+	 * How far a newborn particle is pushed towards white, 0..1. At 1 — the default,
+	 * and what fire wants — the hottest tenth of every life runs to a warm white,
+	 * which is what makes an ember read as incandescent. A spell's own colour is
+	 * the other case: a blue firefly that is born white reads as a white one, and a
+	 * pale ink colour has no headroom to spare.
+	 */
+	whiteHot: number;
+
+	/**
+	 * How much of the birth ramp is measured in seconds rather than in life, 0..1.
+	 *
+	 * A particle grows in over its first 8% of life and its alpha over the first
+	 * 5%, which is invisible on a half-second spark and a whole beat on a
+	 * three-second firefly: ten frames of nothing, so a mote shed exactly where the
+	 * ink was going showed up a stroke's length behind it. At 1 both ramps take a
+	 * fixed {@link SNAP_SECONDS} instead, so whatever is born is on screen the
+	 * frame it is born — which is the whole contract when the thing emitting it is
+	 * the edge of something visibly disappearing.
+	 */
+	snap: number;
 }
 
 /**
@@ -275,7 +394,22 @@ const DEFAULTS: EmitterState = {
 	twinkle: 0,
 	twinkleRate: 3.2,
 	sparkle: 0,
+	stretch: 0,
+	square: 0,
+	fadeSize: 0,
+	opacity: 0.22,
+	inherit: 0,
+	halo: 0,
+	haloSize: 4,
+	// `stretch` is a time, so a leader thrown at ten metres a second would ask for
+	// a streak most of a metre long; past this it stops reading as a spark.
+	streakMax: 14,
+	whiteHot: 1,
+	snap: 0,
 };
+
+/** The birth ramp under {@link EmitterState.snap}: a frame and a bit. */
+const SNAP_SECONDS = 0.02;
 
 /**
  * A pool of particles that lives entirely in storage buffers, advanced by one
@@ -326,6 +460,16 @@ export class ParticleField {
 	private readonly uTwinkle = uniform( 0 );
 	private readonly uTwinkleRate = uniform( 3.2 );
 	private readonly uSparkle = uniform( 0 );
+	private readonly uStretch = uniform( 0 );
+	private readonly uSquare = uniform( 0 );
+	private readonly uFadeSize = uniform( 0 );
+	private readonly uOpacity = uniform( 0.22 );
+	private readonly uInherit = uniform( 0 );
+	private readonly uHalo = uniform( 0 );
+	private readonly uHaloSize = uniform( 4 );
+	private readonly uStreakMax = uniform( 14 );
+	private readonly uWhiteHot = uniform( 1 );
+	private readonly uSnap = uniform( 0 );
 	/** Seconds since the field was built, for anything that has to oscillate. */
 	private readonly uClock = uniform( 0 );
 
@@ -426,6 +570,16 @@ export class ParticleField {
 		this.uTwinkle.value = merged.twinkle;
 		this.uTwinkleRate.value = merged.twinkleRate;
 		this.uSparkle.value = merged.sparkle;
+		this.uStretch.value = merged.stretch;
+		this.uSquare.value = merged.square;
+		this.uFadeSize.value = merged.fadeSize;
+		this.uOpacity.value = merged.opacity;
+		this.uInherit.value = merged.inherit;
+		this.uHalo.value = merged.halo;
+		this.uHaloSize.value = Math.max( 1, merged.haloSize );
+		this.uStreakMax.value = Math.max( 1, merged.streakMax );
+		this.uWhiteHot.value = merged.whiteHot;
+		this.uSnap.value = merged.snap;
 		this.uDrift.value.copy( merged.drift );
 
 		if ( state.position !== undefined ) this.uEmitter.value.copy( state.position );
@@ -507,31 +661,7 @@ export class ParticleField {
 
 		const ember = mix( cold, warm, smoothstep( 0.0, 0.35, heat ) );
 		const flame = mix( ember, hot, smoothstep( 0.3, 0.72, heat ) );
-		const tint = mix( flame, vec3( 1, 0.94, 0.86 ), smoothstep( 0.88, 1.0, heat ) );
-
-		const offset = uv().sub( 0.5 );
-		const disc = smoothstep( 0.5, 0.08, offset.length() );
-
-		// A four-pointed glint: a hard core with two crossed spikes, each rotated by
-		// the particle's own angle so the pool is not a field of plus signs. Built
-		// from the same quad — no extra geometry, no extra draw.
-		const angle = hash( instanceIndex.mul( uint( 5381 ) ) ).mul( Math.PI * 2 );
-		const ca = cos( angle );
-		const sa = sin( angle );
-		const turned = vec2(
-			offset.x.mul( ca ).sub( offset.y.mul( sa ) ),
-			offset.x.mul( sa ).add( offset.y.mul( ca ) ),
-		);
-
-		const reach = smoothstep( 0.5, 0.0, turned.length() );
-		const spikes = max(
-			smoothstep( SPIKE_WIDTH, 0.0, abs( turned.y ) ),
-			smoothstep( SPIKE_WIDTH, 0.0, abs( turned.x ) ),
-		).mul( reach );
-		const star = max( smoothstep( 0.17, 0.0, turned.length() ), spikes.mul( 0.8 ) );
-
-		const sprite = mix( disc, star, this.uSparkle );
-		const puff = smoothstep( 0.0, 0.12, ratio ).mul( pow( ratio.oneMinus(), 1.25 ) );
+		const tint = mix( flame, vec3( 1, 0.94, 0.86 ), smoothstep( 0.88, 1.0, heat ).mul( this.uWhiteHot ) );
 
 		// Everything off the particle is discarded rather than left at zero alpha.
 		// The scene pass is an MRT and SSGI reads what it writes: an invisible
@@ -544,6 +674,7 @@ export class ParticleField {
 		// it look like a GI fault rather than a sprite — the same trap the flames set,
 		// and the reason this is the shared material rather than one effect's.
 		material.positionNode = this.positions.toAttribute();
+
 		// Born small, swell, fade — the classic puff. `uGrowth` dials the swelling
 		// out: at 1 this is the original curve, which quadruples a particle over its
 		// life and is right for smoke and for a charge gathering. An ember is the
@@ -551,11 +682,104 @@ export class ParticleField {
 		// thrown and only cools from there — and at 0 it simply holds its size.
 		const swell = mix( float( 1 ), ratio.mul( 1.9 ).add( 0.55 ), this.uGrowth );
 
-		material.scaleNode = alive
+		// `fadeSize`: the size holds while the particle is hot and then goes to
+		// nothing, so the dying is a spark burning out rather than a light dimming.
+		// It holds past the middle of the life on purpose — that is where the heat
+		// ramp has cooled the colour from yellow to orange, and shrinking earlier
+		// took the orange and red phases down to a pixel before they could be seen.
+		// The alpha side of the same switch is `fade`, below.
+		const shrink = mix( float( 1 ), smoothstep( 1.0, 0.55, ratio ), this.uFadeSize );
+
+		const base = alive
 			.mul( grain.mul( this.uSpread ).add( float( 1 ).sub( this.uSpread ) ) )
 			.mul( this.uSize )
 			.mul( mix( float( 1 ), this.uDustSize, dust ) )
-			.mul( smoothstep( 0.0, 0.08, ratio ).mul( swell ) );
+			.mul( mix( smoothstep( 0.0, 0.08, ratio ), smoothstep( 0.0, SNAP_SECONDS, life.x ), this.uSnap ).mul( swell ) )
+			.mul( shrink );
+
+		// The streak. The velocity is taken into view space — the mesh sits at the
+		// origin, so this is the camera's rotation and nothing else — and only its
+		// screen-plane part is kept: a spark flying at the camera has nothing to
+		// smear. Length is speed times `stretch`, per particle, capped so the fastest
+		// leader is still a mark rather than a line across the room.
+		const velocity = this.velocities.toAttribute();
+		const planar = modelViewMatrix.mul( vec4( velocity, 0 ) ).xy;
+		const streakVar = hash( instanceIndex.mul( uint( 2879 ) ) ).mul( 1.1 ).add( 0.45 );
+		const reach = planar.length().mul( this.uStretch ).mul( streakVar )
+			.min( base.mul( this.uStreakMax.sub( 1 ) ) );
+
+		// The halo's room: the quad is padded by the same amount on every side, so a
+		// streak's glow is a capsule around it rather than a longer streak. Exactly 1
+		// when there is no halo, which leaves every effect that never asked for one
+		// on the quad it was tuned against.
+		const pad = mix( float( 1 ), this.uHaloSize, step( 0.0001, this.uHalo ) );
+
+		material.scaleNode = vec2( base.add( reach ).add( base.mul( pad.sub( 1 ) ) ), base.mul( pad ) );
+
+		// Turned to face the way it is going. Zeroed when nothing is stretched so
+		// the effects that never asked for this stay exactly as they were tuned —
+		// the glint carries its own random angle and does not want a second one.
+		material.rotationNode = atan( planar.y, planar.x ).mul( step( 0.0001, this.uStretch ) );
+
+		// Handed across to the fragment stage once per vertex: the mask has to know
+		// how much longer than wide the quad it is painting has become.
+		const aspect = base.add( reach ).div( max( base, float( 1e-6 ) ) ).toVarying();
+
+		// The mask, in width units: y runs ±0.5 and x runs ±aspect/2, so the shapes
+		// below are all drawn around a segment `half` long and the round ends of a
+		// capsule fall out of the same distance the unstretched disc uses. At
+		// aspect 1 every one of these is exactly the sprite it was before. The halo's
+		// padding is added in the same units, so the core is drawn the same size
+		// whatever the halo around it.
+		const p = uv().sub( 0.5 );
+		const q = vec2( p.x.mul( aspect.add( pad ).sub( 1 ) ), p.y.mul( pad ) );
+		const half = aspect.sub( 1 ).mul( 0.5 );
+		const dx = abs( q.x ).sub( half ).max( 0 );
+
+		const disc = smoothstep( 0.5, 0.08, vec2( dx, q.y ).length() );
+
+		// Hard-edged: the Chebyshev distance is a box, and the narrow step is the
+		// pixel of anti-aliasing that keeps it from shimmering.
+		const box = smoothstep( 0.5, 0.4, max( dx, abs( q.y ) ) );
+
+		// A four-pointed glint: a hard core with two crossed spikes, each rotated by
+		// the particle's own angle so the pool is not a field of plus signs. Built
+		// from the same quad — no extra geometry, no extra draw.
+		const angle = hash( instanceIndex.mul( uint( 5381 ) ) ).mul( Math.PI * 2 );
+		const ca = cos( angle );
+		const sa = sin( angle );
+		const turned = vec2(
+			q.x.mul( ca ).sub( q.y.mul( sa ) ),
+			q.x.mul( sa ).add( q.y.mul( ca ) ),
+		);
+
+		const glintReach = smoothstep( 0.5, 0.0, turned.length() );
+		const spikes = max(
+			smoothstep( SPIKE_WIDTH, 0.0, abs( turned.y ) ),
+			smoothstep( SPIKE_WIDTH, 0.0, abs( turned.x ) ),
+		).mul( glintReach );
+		const star = max( smoothstep( 0.17, 0.0, turned.length() ), spikes.mul( 0.8 ) );
+
+		const sprite = mix( mix( disc, box, this.uSquare ), star, this.uSparkle );
+
+		// The halo: distance from the core's own segment, out to the edge of the
+		// padding, on a cubic so it is a glow with a bright middle rather than a
+		// flat disc. Peaks at `halo` under the core and is zero at the quad's edge.
+		const glowReach = clamp( vec2( dx, q.y ).length().div( pad.mul( 0.5 ) ).oneMinus(), 0, 1 );
+		const haze = pow( glowReach, 3 ).mul( this.uHalo );
+
+		// Along a streak the head is where the particle is and the tail is where
+		// it was, so the brightness runs off towards the back. Only once there is
+		// a streak to run along — an unstretched sprite is left flat.
+		const along = q.x.div( max( aspect, float( 1 ) ) ).add( 0.5 );
+		const trail = mix( float( 1 ), smoothstep( 0.0, 1.0, along ).mul( 0.7 ).add( 0.3 ), clamp( aspect.sub( 1 ), 0, 1 ) );
+
+		// The alpha over a life: the old puff curve, or — under `fadeSize` — solid
+		// from a few frames in until the shrink above has taken the size away.
+		const born = smoothstep( 0.0, 0.12, ratio );
+		const puff = born.mul( pow( ratio.oneMinus(), 1.25 ) );
+		const held = mix( smoothstep( 0.0, 0.05, ratio ), smoothstep( 0.0, SNAP_SECONDS, life.x ), this.uSnap );
+		const fade = mix( puff, held, this.uFadeSize );
 
 		// Dust is not a dim ember; it is a different material. Pulled towards a flat
 		// paper grey so it reads as something the page shed rather than something
@@ -590,11 +814,14 @@ export class ParticleField {
 		// their whole colour was already wrapped in one.
 		material.opacityNode = Fn( () => {
 
-			const mask = sprite.mul( puff ).mul( alive ).toVar();
+			const life = fade.mul( alive );
+			const mask = sprite.mul( trail ).mul( this.uOpacity ).add( haze ).mul( life ).toVar();
 
-			mask.lessThan( 0.02 ).discard();
+			// Lower than the old 0.02 because the halo's tail is meant to be faint;
+			// the corners of the padded quad are still exactly zero and still go.
+			mask.lessThan( 0.003 ).discard();
 
-			return mask.mul( 0.22 );
+			return mask;
 
 		} )();
 
@@ -682,9 +909,17 @@ export class ParticleField {
 					// reads as a hesitation rather than as weight.
 					const born = step( hash( instanceIndex.mul( uint( 3571 ) ) ), this.uDust );
 
+					// The emitter's own motion this frame, as a velocity — see `inherit`.
+					// Guarded against a zero-length frame, which would otherwise hand
+					// every newborn an infinite speed.
+					const carried = this.uEmitter.sub( this.uPrevEmitter )
+						.div( max( this.uDelta, float( 1e-4 ) ) )
+						.mul( this.uInherit );
+
 					position.assign( along.add( offset ) );
 					velocity.assign( launch.mul( mix( float( 1 ), float( 0.45 ), born ) )
 						.add( swirl )
+						.add( carried )
 						.add( this.uDrift.mul( born.oneMinus() ) ) );
 					life.assign( vec2( 0, this.uLifeSpan.mul( rand( 6 ).mul( 0.5 ).add( 0.75 ) ) ) );
 

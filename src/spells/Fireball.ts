@@ -71,6 +71,56 @@ const FLOOR = 0.02;
 const GRAVITY = - 5.2;
 
 /**
+ * Everything about the ash that does not change between being thrown and being
+ * shed: what it looks like, and how it comes down.
+ *
+ * The motion is all an argument about air rather than about fire. `buoyancy`
+ * −0.55 against `damping` 1.6 is a terminal fall of about a third of a metre a
+ * second, so a flake lofted two metres takes most of `ASH_TIME` to land — which is
+ * why ash is still coming down when everything else has finished.
+ *
+ * The look is grit, not snow. At 2.8 cm and a soft pale disc each flake was
+ * bigger than a burst spark by five times, and two thousand of them drifting
+ * across the dark wall read as a snowfall of pale blobs — the one part of the
+ * shot that was still big and flat after the sparks had been made small. Now it
+ * is a few millimetres, a hard square like everything else in the spell, and
+ * lit by the palette in the pool (see `ash` in the constructor): the youngest
+ * flakes are still embers and just touch the bloom as they are lofted, and
+ * within a fraction of a second they have cooled to a dim red and then to soot,
+ * so what comes down for the rest of `ASH_TIME` is barely-there grit. `glow` 1.5
+ * is what puts only that first moment over 1.15. `sparkle` 0 — a glint is a
+ * point of light, and this is a piece of something. `twinkle` stays: a flake
+ * turning over catches the light and loses it again.
+ */
+const ASH_FALL = {
+	shape: 0,
+	size: 0.0045,
+	growth: 0,
+	spread: 0.8,
+	glow: 1.5,
+	sparkle: 0,
+	square: 1,
+	opacity: 1,
+	fadeSize: 0.6,
+	twinkle: 0.5,
+	twinkleRate: 1.5,
+	buoyancy: - 0.55,
+	damping: 1.6,
+	floor: FLOOR,
+
+	// A third of it heavier — grit rather than flake — falling three times as hard.
+	// Two speeds is what stops a fall reading as one sheet coming down.
+	dust: 0.32,
+	dustBuoyancy: - 1.9,
+	dustGlow: 0.35,
+	dustSize: 0.8,
+
+	turbulence: 1.6,
+	turbulenceScale: 0.5,
+	turbulenceFriction: 0.9,
+} as const;
+
+/**
  * The core's geometry radius, and how far the surface is allowed to boil in and
  * out of it as a fraction of that.
  *
@@ -84,49 +134,13 @@ const GRAVITY = - 5.2;
  * because displacement is only as fine as the vertices carrying it and at detail
  * 3 the boil came out faceted.
  */
-/**
- * Everything about the ash that does not change between being thrown and being
- * shed: what it looks like, and how it comes down.
- *
- * The numbers are all arguments about air rather than about fire. `buoyancy`
- * −0.55 against `damping` 1.6 is a terminal fall of about a third of a metre a
- * second, so a flake lofted two metres takes most of `ASH_TIME` to land — which is
- * why ash is still coming down when everything else has finished. `glow` 0.9 keeps
- * it *under* the 1.15 bloom threshold on purpose: ash is lit, not luminous, and a
- * flake with a halo is an ember. `sparkle` 0 for the same reason — a glint is a
- * point of light, and this is a piece of something. What it has instead is
- * `twinkle`, which is the only thing here that is not about air: a flake turning
- * over catches the room's light and loses it again.
- */
-const ASH_FALL = {
-	shape: 0,
-	size: 0.028,
-	growth: 0.1,
-	spread: 0.9,
-	glow: 0.9,
-	sparkle: 0,
-	twinkle: 0.5,
-	twinkleRate: 1.5,
-	buoyancy: - 0.55,
-	damping: 1.6,
-	floor: FLOOR,
-
-	// A third of it heavier — grit rather than flake — falling three times as hard.
-	// Two speeds is what stops a fall reading as one sheet coming down.
-	dust: 0.32,
-	dustBuoyancy: - 1.9,
-	dustGlow: 0.55,
-	dustSize: 0.7,
-
-	turbulence: 1.6,
-	turbulenceScale: 0.5,
-	turbulenceFriction: 0.9,
-} as const;
-
 const CORE_RADIUS = 0.075;
 const CORE_BOIL = 0.42;
 
 const UP = new Vector3( 0, 1, 0 );
+
+/** Scratch for {@link Fireball.update}; never escapes the call. */
+const SCRATCH = new Vector3();
 
 /** The one-shot `Chime` holds for this spell — loaded in `main`, at the gate. */
 export const FIREBALL_SOUND = 'fireball';
@@ -164,10 +178,10 @@ export class Fireball {
 	 *
 	 * `ParticleField` can already run two populations out of one kernel — that is
 	 * what `dust` is — but the two share a palette, a lifetime and a damping, and
-	 * ash disagrees with an ember about all three. It is grey rather than lit, it
-	 * lives four times as long, and it falls slowly because it is mostly air
-	 * resistance. Forcing it through the same uniforms would have meant compromising
-	 * both, and the compromise is exactly what makes an effect read as "particles"
+	 * ash disagrees with an ember about all three. It cools to soot where an ember
+	 * cools to red, it lives over twice as long, and it falls slowly because it is
+	 * mostly air resistance. Forcing it through the same uniforms would have meant
+	 * compromising both, and the compromise is exactly what makes an effect read as "particles"
 	 * instead of as fire and ash.
 	 *
 	 * 2,048 against the embers' 9,216. Ash is sparse — it is what is *left* — and
@@ -182,7 +196,17 @@ export class Fireball {
 
 		this.embers = new ParticleField( renderer, scene, {
 			count: 9216,
-			palette: [ 0x2a0407, 0xd8330a, 0xff8a1e ],
+
+			// Deep red through red-orange to a hot amber that the material takes on
+			// to near-white at the moment of the throw. The old top was a plain
+			// orange, which is the colour of the *middle* of a fire: with nothing
+			// hotter above it every spark was the same orange dot at every age. It was
+			// a pale yellow for a pass, and that was too far the other way — at the
+			// emission these sparks now run at, AgX takes a pale yellow to white, and
+			// the whole young shower read white rather than as a fire cooling. Amber
+			// keeps its colour at eight or ten and leaves white to the first frames
+			// of a spark's life, which is where the material puts it.
+			palette: [ 0x3a0603, 0xff3a0a, 0xffa336 ],
 
 			// Several octaves of noise per particle per frame, and worth every one of
 			// them here. The other thing that made a detonation read as a bubble is
@@ -196,9 +220,14 @@ export class Fireball {
 		this.ash = new ParticleField( renderer, scene, {
 			count: 2048,
 
-			// Soot to pale ash, coldest first. Nothing in this ramp is a fire colour:
-			// what separates ash from a dying ember is that it was never burning.
-			palette: [ 0x14100e, 0x4a423c, 0xc0b4a6 ],
+			// Soot, a dull banked red, and an ember orange at the top, coldest first.
+			// This was soot to *pale* ash, and pale was the problem: with nothing hot
+			// in the ramp the only way to see a flake at all was to make it big and
+			// light-coloured, which is snow. A flake that starts as an ember and
+			// cools to soot on the way down is visible exactly while it is worth
+			// seeing and goes dark as it lands. The heavy third (`dust`) is pulled to
+			// the material's own flat grey whatever this says — the grit.
+			palette: [ 0x0d0907, 0x4a1c0c, 0xff6a24 ],
 
 			// The flutter. Ash falls badly — it is light enough that the air decides
 			// where it goes — and the turbulence field is what makes neighbouring
@@ -315,6 +344,23 @@ export class Fireball {
 
 		this.core.position.copy( this.corePosition );
 		this.light.position.copy( this.corePosition );
+
+		// Once it has gone off, the light stands a little back from the point of
+		// impact, level with it, on the side the shot came in from. The target is on the dummy's
+		// surface, and a point light with inverse-square falloff sitting *on* a
+		// surface paints a blown-out disc there — a pale glowing ball on the
+		// bullseye that outlasted every spark and read as the biggest particle in
+		// the shot. Sixty centimetres back — a third of a metre still left a hot
+		// disc, since at that range the falloff is still steep across the dummy's
+		// chest — the same light washes the dummy and the floor instead of burning
+		// a hole in one spot of it. Level, because backing it off towards the arc's
+		// control point lifted it to the dummy's head and moved the hot disc there.
+		if ( this.phase === 'burst' || this.phase === 'settle' ) {
+
+			SCRATCH.subVectors( this.origin, this.target ).setY( 0 ).normalize();
+			this.light.position.addScaledVector( SCRATCH, 0.6 );
+
+		}
 		this.shock.position.copy( this.target );
 
 		this.embers.step( dt );
@@ -331,47 +377,107 @@ export class Fireball {
 
 		this.embers.configure( {
 			position: this.corePosition,
-			swirl: 1.6,
-			spawnRate: 0.05,
-			radius: 0.07 * ( 1 - t * 0.72 ),
-			speed: 0.04,
-			lifeSpan: 0.38,
-			attract: 34 * t + 8,
-			drift: new Vector3( 0, 0.08, 0 ),
 
-			// The gather is the one phase that may still swell a little — it reads as
-			// heat pooling rather than as sparks thrown.
-			size: 0.007 + t * 0.003,
-			growth: 0.5,
+			// **Sparks falling in, not a pile building up.** They are born out on a
+			// shell a hand's breadth wide and `attract` hauls them into the core, so
+			// the gather has a direction — inwards — instead of being a cloud that
+			// happens to be centred on something.
+			//
+			// The old gather was a swirl of 1.6 m/s against an `attract` that started
+			// at 8, and a spring only holds an orbit of radius `swirl / √attract`:
+			// that is over half a metre, which is why the charge was a pinkish heap
+			// the width of the parchment rather than a knot of heat above it. Here
+			// the spring starts at 30 and ends at 70 — a quarter-period, the time to
+			// fall from the shell to the middle, of 0.29 s down to 0.19 s, so a spark
+			// makes one pass at the core inside its life and is gone — and the swirl
+			// is about half of what would hold a circle, so each one spirals in on a
+			// flat ellipse rather than orbiting.
+			swirl: 0.35,
+			radius: 0.12 * ( 1 - t * 0.4 ),
+			speed: 0.05,
+			attract: 30 + 40 * t,
+
+			// Heavy drag on top of the spring, so what overshoots the middle is
+			// caught there instead of flying out the far side — the spiral closes.
+			// Critical damping for this spring is `2√attract`, eleven to seventeen;
+			// seven is a bit over half that, so a spark swings through the core once
+			// and settles into it instead of ringing out to the shell and back, which
+			// is what filled the gather in to a ball.
+			damping: 7,
+
+			// A spark's whole visit is one fall into the middle. About as long as the
+			// spring's quarter-period plus a little, so they arrive, flare and die in
+			// the core rather than hanging around it.
+			lifeSpan: 0.34,
+
+			// Sparse, because each one is now bright enough to be seen on its own.
+			// Forty to sixty a frame on the dead pool, so under a thousand in the air
+			// at the end of the gather — against the old rate's hundred-odd a frame
+			// into a sprite twice the size, which piled up into a pale heap the width
+			// of the page.
+			spawnRate: 0.004 + t * 0.003,
+
+			// Nothing rises: heat pooling upwards is what made the heap tall. The
+			// core itself climbs off the page, and the sparks follow it.
+			drift: new Vector3(),
+			buoyancy: 0,
+
+			// A few pixels, and hot. The recipe from the burst: a third of the old
+			// size, several times the emission, so each core crosses the 1.15 bloom
+			// on its own and the halo does the rest. The ramp with `t` is the charge
+			// building — the last sparks in are the hottest.
+			size: 0.0032 + t * 0.0012,
+			growth: 0,
 			spread: 0.7,
+			glow: 7 + t * 7,
+			halo: 0.06,
+			haloSize: 5,
 
-			// Just over the bloom threshold as the gather finishes, so the halo comes
-			// up with the charge instead of switching on. The whole ramp sits higher
-			// than it did — the candle three inches away emits at 7, and a fireball
-			// being gathered has no business being the dimmer of the two.
-			glow: 4 + t * 4.5,
+			// Hard squares burning out by size, smeared along their fall into short
+			// dashes. A spark falls in at about `radius × √attract` — some sixty
+			// centimetres a second — so 0.02 s of it is a centimetre, and the cap
+			// holds the quick ones at five widths: a spiral of dashes pointing at the
+			// core. The
+			// old worry about stretch making a column was the overshoot at ten metres
+			// a second that the heavy spring used to cause; at these speeds there is
+			// none.
+			square: 1,
+			fadeSize: 1,
+			opacity: 1,
+			stretch: 0.02,
+			streakMax: 5,
+			sparkle: 0,
+			twinkle: 0.3,
 
-			// Heat pooling, so this is the one phase that still rises.
-			buoyancy: 0.3,
-
-			// A glint rather than a blob. The round sprite is the silhouette of a
-			// puff of smoke and no amount of tuning the motion argues with a
-			// silhouette; the spikes are what read as light. Gentle here, because
-			// what is being described is a gather rather than a shower.
-			sparkle: 0.3,
-			twinkle: 0.25,
-
-			// Just enough to keep the pool boiling while it waits.
-			turbulence: 0.5,
+			// Just enough to keep the gather from being a perfect funnel.
+			turbulence: 0.3,
 			turbulenceScale: 1.6,
 			turbulenceFriction: 2.2,
 		} );
 
-		this.uCore.value = t;
-		this.core.scale.setScalar( 0.2 + t * 0.55 );
-		this.light.intensity = 0.55 * t * t;
+		// The white-hot middle the sparks are falling into. Small — it was allowed
+		// to reach three-quarters of the flight size here, and under the spark halo
+		// that read as a pink ball the sparks were piled on rather than a point of
+		// heat — and driven past 1 by the end of the gather so it is the hottest
+		// thing in the charge and blooms white, not salmon.
+		this.uCore.value = 0.3 + t * 1.2;
+		this.core.scale.setScalar( 0.12 + t * 0.3 );
+		// A glow on the page, not a lamp on it: the light is a dozen centimetres
+		// off the parchment here, and at the old 0.55 the end of the gather washed
+		// the whole page out to a pale pink.
+		this.light.intensity = 0.3 * t * t;
 
-		if ( t >= 1 ) this.enter( 'flight' );
+		if ( t >= 1 ) {
+
+			// The arc leaves from where the gather ended, not from the page it
+			// rose off. The curve used to start at the origin proper, so the core
+			// dropped twelve centimetres in one frame on the way into flight — and
+			// now that the trail inherits the emitter's motion, that frame slung a
+			// fan of sparks straight down at the desk.
+			this.origin.copy( this.corePosition );
+			this.enter( 'flight' );
+
+		}
 
 	}
 
@@ -383,28 +489,59 @@ export class Fireball {
 
 		this.embers.configure( {
 			position: this.corePosition,
-			// Smaller embers cover less of the screen, and an additive glow is area
-			// times count — so the tail is kept by throwing more of them, not bigger
-			// ones. That is the trade that turns a smear into a trail of sparks.
-			spawnRate: 0.26,
-			radius: 0.045,
-			speed: 0.4,
-			lifeSpan: 0.45,
-			attract: 3,
+			// Sparse. This was 0.26 when the sprites were faint discs and the tail
+			// had to be kept by count; a solid streak carries the trail on its own,
+			// and at the old rate the whole nine-thousand pool was awake behind the
+			// shot and the arc was a column of light rather than a wake of sparks.
+			// The arithmetic: this is a per-dead-particle chance per frame, so 0.006
+			// on a nine-thousand pool is about fifty sparks a frame, and at a 0.5 s
+			// life that is some fifteen hundred in the air behind the shot — plenty,
+			// now that each one is a point of light rather than part of a smear.
+			spawnRate: 0.006,
+			radius: 0.035,
+			speed: 0.35,
+			lifeSpan: 0.5,
 
-			// Barely any lift, and then weight. The trail used to rise off the arc,
-			// which put the sparks *above* a shot travelling on a lobbed curve —
-			// exactly backwards. Falling away behind it is what makes the arc read as
-			// an arc rather than as a line with a fringe.
-			drift: new Vector3( 0, 0.1, 0 ),
-			buoyancy: - 1.6,
+			// Weak, and only so the last of the gather is towed off the page behind
+			// the shot instead of being flung out of its orbit the instant the spring
+			// lets go. At 3 it also dragged the wake back into the head, which bunched
+			// the tail into a column following the core.
+			attract: 1.2,
+
+			// A fraction of the shot's own speed, not most of it. A comet's tail is
+			// what the head leaves *behind*: at 0.6 the sparks kept pace with the core
+			// and the wake was a sheath around it; at 0.25 they fall back along the
+			// arc and only a little way past where they were shed, so the tail is laid
+			// out along the path and every streak points the way the shot went.
+			inherit: 0.25,
+
+			// No lift, and then weight. The trail used to rise off the arc, which put
+			// the sparks *above* a shot travelling on a lobbed curve — exactly
+			// backwards. Falling away behind it is what makes the arc read as an arc
+			// rather than as a line with a fringe.
+			drift: new Vector3(),
+			buoyancy: - 2.4,
 			floor: FLOOR,
-			size: 0.013,
-			growth: 0.25,
+
+			// Embers a few pixels across, glowing on their own — see the burst. A
+			// third of the old size, four times the emission: each one blooms, and
+			// the wake is a scatter of points of light instead of pale blobs.
+			size: 0.0038,
+			growth: 0,
 			spread: 0.8,
-			glow: 9,
-			sparkle: 0.45,
-			twinkle: 0.2,
+			glow: 14,
+			halo: 0.05,
+			haloSize: 5,
+
+			// Short streaks along the way each ember is falling off the arc, so the
+			// tail draws the shot's motion behind it — dashes, not lines.
+			sparkle: 0,
+			square: 1,
+			fadeSize: 1,
+			opacity: 1,
+			stretch: 0.02,
+			streakMax: 4,
+			twinkle: 0.3,
 
 			// The trail curls off the arc rather than trailing it in a tube.
 			turbulence: 1.1,
@@ -412,8 +549,14 @@ export class Fireball {
 			turbulenceFriction: 1.8,
 		} );
 
-		this.uCore.value = 1;
-		this.core.scale.setScalar( 0.8 );
+		// The comet's head: smaller than it was and hotter. At 0.8 and a multiplier
+		// of 4.1 it was a twelve-centimetre ball that AgX took to a flat salmon
+		// disc, the largest non-blooming thing in the shot. At half the size and
+		// driven well past its charge brightness (`uCore` 2.2 takes the multiplier
+		// to about 8), the middle goes white and blooms, and the trail is what carries
+		// the size of the thing.
+		this.uCore.value = 2.2;
+		this.core.scale.setScalar( 0.5 );
 		this.light.intensity = 2.6;
 
 		if ( t >= 1 ) {
@@ -433,8 +576,17 @@ export class Fireball {
 
 		this.embers.configure( {
 			position: this.corePosition,
-			spawnRate: 0.85,
-			radius: 0.14,
+
+			// One punch, not a fountain. The rate is a per-frame chance for each dead
+			// particle, and at the old 0.85 the whole nine-thousand pool was awake
+			// within three frames — every one of them over the bloom at once, which
+			// is the white-out. At 0.16 falling to nothing, the first frame throws
+			// twelve hundred and the burst as a whole a bit over half the pool, most
+			// of it in the first tenth of a second: a dense hot knot at the moment of
+			// impact, then nothing new, so the shower that follows is the same sparks
+			// cooling rather than fresh white ones being added to it.
+			spawnRate: 0.16 * ( 1 - t ),
+			radius: 0.1,
 			speed: 3.4 * ( 1 - t * 0.55 ),
 
 			// Long enough to arrive. At this gravity the shower needs about a second
@@ -488,28 +640,55 @@ export class Fireball {
 			// out and rains, the other drops almost straight down through it.
 			dust: 0.26,
 			dustBuoyancy: - 9,
-			dustGlow: 2.6,
+			// Under the bloom now that the sprite is solid — the heavy quarter is the
+			// dark grit falling through the light, not more of the light.
+			dustGlow: 0.8,
 			dustSize: 0.8,
 
 			// Sparks, not smoke. This was 0.075 with the full swell, which works out
 			// at 18 cm across by the end of a particle's life — bigger than the
 			// dummy's head, so nine thousand of them read as one soft cloud instead
-			// of as a shower you can pick individual embers out of.
-			size: 0.020,
-			growth: 0.3,
-			spread: 0.82,
+			// of as a shower you can pick individual embers out of. The spread is
+			// wide so a few big sparks ride among many small ones.
+			size: 0.0055,
+			growth: 0.1,
+			spread: 0.88,
 
 			// Hardest here, and it falls with `t`: the detonation is the one moment
 			// the embers should be brighter than anything in the room, and the decay
-			// is what stops the shower still glowing while it settles. 9 was not
-			// brighter than anything in the room — a candle flame emits at 7 across a
-			// sprite that fills far more of the screen than an ember does, which is
-			// why the candles beside the parchment out-bloomed the detonation.
-			glow: 16 * ( 1 - t * 0.5 ),
+			// is what stops the shower still glowing while it settles. Against a
+			// solid sprite a few pixels wide, 11 takes every young core well over the
+			// 1.15 bloom and still leaves the colour in it: the yellow top of the
+			// ramp comes out at eight or nine, which AgX keeps yellow, where the 16 of
+			// the first pass put it at fifteen and the whole shower read white. The
+			// white is kept for the first few frames of a spark's life, where the
+			// material's own tint puts it, and for the flash of the core.
+			glow: 11 * ( 1 - t * 0.4 ),
 
-			// The glint, hardest of the three phases. This is a shower of sparks and
-			// a spark is a point of light, not a dot of matter.
-			sparkle: 0.6,
+			// A faint glow inside each sprite's own quad, and a small one. This pool
+			// is dense at the moment of impact, and the halo is additive like
+			// everything else: at 0.05 across six widths, a thousand overlapping
+			// halos were a haze the size of the dummy that lit the wall pink. At
+			// half the strength and four widths it costs less than half the fill and
+			// stays a glow around each spark rather than a fog around all of them.
+			halo: 0.025,
+			haloSize: 4,
+			streakMax: 5,
+
+			// **What makes it an explosion rather than a shower.** Every spark is a
+			// hard bar smeared along its own velocity for `stretch` seconds of travel:
+			// the leaders `spray` throws three times as far draw long streaks out of
+			// the blast, the slow body behind them stays a scatter of squares, and the
+			// plume `updraft` sends up arcs over as a fan of lines. One number, and
+			// the eye reads every speed in the pool at once — which is exactly what a
+			// real burst shows and an even cloud of dots never can. Solid and dying
+			// by size, so the shower keeps its contrast to the last frame instead of
+			// dissolving into an orange haze.
+			sparkle: 0,
+			square: 1,
+			fadeSize: 1,
+			opacity: 1,
+			stretch: 0.03,
 			twinkle: 0.3,
 		} );
 
@@ -526,12 +705,23 @@ export class Fireball {
 			...ASH_FALL,
 		} );
 
-		this.uCore.value = 1 - t;
-		this.core.scale.setScalar( 0.8 + t * 1.6 );
-		this.light.intensity = 16 * ( 1 - t * 0.7 );
+		// The flash: white-hot, brief, and not much bigger than the shot. It used
+		// to swell to two and a half times the flight size — eighteen centimetres
+		// of radius — while fading linearly, so for most of the burst there was a
+		// pale ball the size of the dummy's head sitting in the middle of the
+		// sparks. Now it starts hotter than the shot (the multiplier is about 9),
+		// opens fast and is gone by the square of `t`: a flash, and then the
+		// sparks.
+		this.uCore.value = 2.4 * ( 1 - t ) ** 2;
+		this.core.scale.setScalar( 0.5 + Math.sqrt( t ) * 1.1 );
+		this.light.intensity = 3 + 6 * ( 1 - t ) ** 2;
 
-		this.shock.scale.setScalar( 0.12 + t * 1.5 );
-		this.uShock.value = ( 1 - t ) ** 1.5;
+		// The shock ring, kept to about half a metre and faded faster. At a metre
+		// and a half it was a pale disc behind the whole dummy for most of the
+		// burst, and even at a metre its edge still read as a circle drawn on the
+		// wall; this small it is a ripple at the heart of the flash.
+		this.shock.scale.setScalar( 0.1 + t * 0.5 );
+		this.uShock.value = 0.5 * ( 1 - t ) ** 2;
 
 		if ( t >= 1 ) {
 
@@ -563,7 +753,7 @@ export class Fireball {
 			...ASH_FALL,
 		} );
 
-		this.light.intensity = 5 * ( 1 - t ) ** 2;
+		this.light.intensity = 3 * ( 1 - t ) ** 2;
 
 		if ( t >= 1 ) {
 
@@ -632,11 +822,12 @@ export class Fireball {
 	 * blobs into filaments and folds, which is what fire actually looks like: it is
 	 * the cheapest structure that does not read as cloud.
 	 *
-	 * Then three ramps over it. A radial one, so the middle is white-hot and the
-	 * edge is thin; a rim term on top, because a shell of gas is optically deepest
-	 * where you look along it; and the hot band tightened with `smoothstep` so
-	 * there is a visible boundary between the white core and the red body instead
-	 * of a gradient across the whole ball.
+	 * Then three ramps over it. One on how squarely the surface faces the camera,
+	 * so the middle of the disc you see is white-hot and the edge is thin; a
+	 * faint rim term on top, because a shell of gas is optically deepest where you
+	 * look along it; and the hot band tightened with `smoothstep` so there is a
+	 * visible boundary between the white core and the red body instead of a
+	 * gradient across the whole ball.
 	 */
 	private buildCoreMaterial(): MeshBasicNodeMaterial {
 
@@ -663,30 +854,43 @@ export class Fireball {
 			unit.mul( 3.6 ).add( warp ).add( vec3( 0, clock.mul( - 1.3 ), 0 ) ), 4,
 		).mul( 0.5 ).add( 0.5 );
 
-		// Hot in the middle, thin at the edge, and deepest where the sight line runs
-		// along the shell.
-		const radial = smoothstep( 1.05, 0.15, unit.length() );
-		const rim = pow( normalView.z.abs().oneMinus(), 2.4 );
+		// Hot in the middle, thin at the edge, and a little deeper where the sight
+		// line runs along the shell.
+		//
+		// The middle used to be a radial term on the local position, and it never
+		// did anything: every fragment of this mesh is *on* its surface, a radius
+		// out, so it came to about 0.05 everywhere and the only thing lifting the
+		// heat was the rim. That is why the core read as a salmon ball with a
+		// lighter edge — hottest exactly where it should be thinnest. The middle of
+		// the disc on screen is where the surface faces the camera, so that is what
+		// the hot term follows now, and the rim is cut to a trace.
+		const facing = pow( normalView.z.abs(), 1.5 );
+		const rim = pow( facing.oneMinus(), 2.4 );
 
-		const heat = churn.mul( 0.62 ).add( radial.mul( 0.55 ) ).add( rim.mul( 0.4 ) ).clamp( 0, 1.3 );
+		const heat = churn.mul( 0.55 ).add( facing.mul( 0.9 ) ).add( rim.mul( 0.2 ) ).clamp( 0, 1.3 );
 
 		// Three colours rather than two: the black-red body is what gives the white
-		// core something to be the middle of.
+		// core something to be the middle of. The middle one is amber rather than
+		// the red-orange it was: driven to six or eight, a red with almost no green
+		// in it is what AgX turns pink, and the head of the shot read as a salmon
+		// ball. Amber at the same level comes out a hot orange going to white.
 		const shell = mix(
-			mix( color( 0x6d0f02 ), color( 0xff5a12 ), smoothstep( 0.15, 0.62, heat ) ),
+			mix( color( 0x6d0f02 ), color( 0xff7a1e ), smoothstep( 0.15, 0.62, heat ) ),
 			color( 0xfff6dc ),
 			smoothstep( 0.72, 1.05, heat ),
 		);
 
-		// 4.1 at full charge, against 2.8 before and the candle's 7.
+		// `uCore` 1 is 4.1; the phases drive it from about 1.6 at the start of the
+		// charge to 8.4 in flight and a flash of 9 at impact.
 		//
-		// The candle is not the comparison it looks like. It emits 7 through a sprite
-		// a few centimetres across; this is a sphere 15 cm wide seen from two metres,
-		// so the same number covers thirty times the screen. Taken to 8 to "out-glare
-		// the candles" it did — it went off like a flashbulb, washed the room pink and
-		// drowned the ember shower it was supposed to be lighting, which is the exact
-		// opposite of what more bloom was wanted for. The halo has to come from the
-		// sparks; the core only has to be hot enough to sit inside it.
+		// Those top figures were once tried and rejected — taken to 8 to "out-glare
+		// the candles", a sphere fifteen centimetres wide went off like a flashbulb,
+		// washed the room pink and drowned the ember shower. What changed is the
+		// size: the core is now kept to two to eight centimetres across while it is
+		// that hot, and only opens out as it fades (see the `scale` each phase
+		// sets), so the same emission covers a quarter of the
+		// screen it used to and reads as a white-hot point with a bloom rather than
+		// as a lamp. The halo around the shot still comes from the sparks.
 		material.colorNode = shell.mul( heat.mul( 0.55 ).add( 0.45 ) ).mul( this.uCore.mul( 3.6 ).add( 0.5 ) );
 		material.transparent = true;
 		material.depthWrite = false;

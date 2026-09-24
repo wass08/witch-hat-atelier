@@ -41,6 +41,25 @@ export class Chime {
 	}
 
 	/**
+	 * The context and the master gain, for another voice that wants to share them
+	 * — or null until {@link prime} has made them.
+	 *
+	 * Never creates the context, unlike everything else here. It is read every
+	 * frame by `InkSfx`, including the frames before the welcome gate, and a
+	 * context made outside a gesture is born suspended and costs a console warning
+	 * in every browser. Waiting for the gate's own `prime` means the continuous
+	 * sounds are unlocked by the same click as the one-shots, on the same clock,
+	 * through the same master: one device, not two drifting against each other.
+	 */
+	get bus(): { context: AudioContext; output: GainNode } | null {
+
+		if ( this.context === null || this.master === null ) return null;
+
+		return { context: this.context, output: this.master };
+
+	}
+
+	/**
 	 * Fetches and decodes a one-shot, ready for {@link play}.
 	 *
 	 * Call it after {@link prime}, from the same gesture: decoding needs the

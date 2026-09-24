@@ -241,18 +241,84 @@ The screen pulls Cormorant Garamond from Google Fonts, with the app's own
 so it paints immediately and swaps — offline it simply stays on Palatino.
 
 **Particles need `glow` to reach the bloom.** A `ParticleField` sprite's additive
-contribution is its tint times its heat ramp times the 0.22 its alpha carries —
-about 0.30 at the very hottest — and `Post`'s bloom does not open until 1.15. So
-nothing in a field has ever bloomed on its own; only enough overlapping sprites
-stacking on one pixel pushed a *region* over, which is why the effects lost their
-halo the moment the particles were made small enough to stop overlapping.
-`EmitterState.glow` multiplies the emitted colour, and past about 3.8 a spark's
-own core crosses the line. Values above 1 are HDR and AgX rolls them off, so it
-buys glow rather than white-out; the heat ramp keeps it to the young half of a
-particle's life and the sprite's radial falloff to the middle of it, so what
-blooms is a hot core inside a spark that still has an edge. Shipped: fireball
-2.6→5 charging, 5.5 in flight, 9 falling through the burst; lightning 10 falling
-with the strike; the rune rides its own charge; ink motes 4.2.
+contribution is its tint times its heat ramp times its `opacity` — which the
+material used to bake in at 0.22, so about 0.30 at the very hottest — and `Post`'s
+bloom does not open until 1.15. So nothing in a field ever bloomed on its own;
+only enough overlapping sprites stacking on one pixel pushed a *region* over,
+which is why the effects lost their halo the moment the particles were made small
+enough to stop overlapping. `EmitterState.glow` multiplies the emitted colour, and
+at the old alpha a spark's own core crossed the line past about 3.8. Values above
+1 are HDR and AgX rolls them off, so it buys glow rather than white-out. Shipped
+at the 0.22 alpha: lightning 10 falling with the strike; the rune rides its own
+charge. The fireball and the ink motes now run solid sprites instead — see below —
+so their figures are a quarter of what they were and mean four times as much.
+
+**The fire is streaks, not dots.** The fireball's embers and the ink motes were
+soft discs at 0.22 alpha fading out by alpha: translucent orange circles that
+never bloomed and never read as an explosion. Five `EmitterState` knobs, all
+defaulting to the old behaviour so lightning, the rune and the ward are
+untouched: `stretch` turns the quad to its screen-space velocity and lengthens it
+by that many seconds of travel (per-particle multiplier on top, capped at
+`STREAK_MAX_ASPECT` widths), so a burst shows every speed in the pool at once;
+`square` blends the disc to a hard-edged box; `fadeSize` dies by shrinking
+rather than by fading, holding full size past the middle of the life so the
+orange and red phases of the heat ramp are seen at size; `opacity` is the alpha;
+`inherit` gives newborns a share of the emitter's own motion, which is what turns
+the flight trail from a column dropping off the arc into a comet's tail. Two
+lessons from tuning it: a solid square carries about four times the light of a
+soft disc of the same size, so every `glow` and `spawnRate` set against discs is
+too high — the flight trail at 0.26 had the whole 9,216 pool awake behind the
+shot — and `stretch` on the charge's gather, where `attract` slings particles
+through the centre at ten-odd metres a second, stood the gather up as a foot-tall
+column of vertical streaks. The figures that shipped with this are superseded —
+see the next paragraph.
+
+**Sparks are tiny and hot, and carry their own halo.** Solid 2 cm bars at `glow`
+1–4.5 were the next failure: big enough to read as flat shapes, too dim to bloom,
+and a wall of matchsticks at 9,216 of them. The fix is the wawa-vfx recipe —
+sprites a few pixels across, emission well over the threshold so every core
+blooms by itself — plus four `EmitterState` knobs on `ParticleField`, all
+defaulting to the old behaviour: `halo`/`haloSize` draw a faint glow inside each
+particle's own (padded) quad, under the bloom threshold, because the gentle
+`Post` bloom barely halos a sprite that small and the room is tuned against it —
+`Post` was deliberately not touched; `streakMax` caps a streak per effect (the old
+constant 14 was a laser on a pool); `whiteHot` scales how far a newborn goes to
+white, so spell-coloured pools stay blue or violet; `snap` makes the birth ramp a
+fixed 20 ms instead of a share of the life, so a long-lived mote is on screen the
+frame it is born. Roughly: sizes ÷4 (burst 0.022 → 0.0055 m), `glow` ×3–4, `square`
+1, `stretch` ≤ 0.035 with `streakMax` 2–6, `halo` 0.03–0.14. Density matters as
+much as size: the burst, the lightning crackle and the flare all spawn rationed
+and front-loaded, because thousands of hot additive sparks landing together
+white out. Hot palette ends are a step down from yellow/pale (amber, saturated
+sky blue) because AgX takes anything this bright the rest of the way to white.
+The fireball's point light also stands 0.6 m back from the impact now — on the
+bullseye it burned a pale disc into the dummy that outlasted the sparks.
+
+**The burn is synced to the fade, and has an edge.** Watched frame-exactly (see
+`atelierDebug.clock` below), the sparks trailed the fade by about a stroke. Three
+causes: `VANISH_AT` fired at 30% darkness, when the line is mostly gone — it is
+0.9 now, the moment the ink starts to thin; the birth ramp hid each mote for up to
+ten frames (`snap`); and a jump frame teleported the emitter to the *end* of the
+line it had just eaten while spawning for all of it, piling a few hundred sparks
+on one point — `VanishPoint.from` now places it at the run's start so the smear
+lays them along the line, and nothing spawns while the front is not moving. On
+top of the motes (now 1,400) a second 2,048-particle field, `EDGE`, sits on the
+front itself: embers that barely move and live 0.3 s, so the line visibly burns
+away from its edge. `InkMotes.burn` exposes a smoothed 0..1 burn level.
+
+**Ink SFX are synthesised, not samples.** `audio/InkSfx.ts` runs on `Chime`'s
+context and master (`Chime.bus`), so the welcome click unlocks it: a paper hiss
+plus baked fibre ticks driven by nib speed (`StrokeRecorder.inking`/`stroke`), and
+a crackle bed that follows `motes.burn`, with a whoosh when the recognised sigil
+flares. Every level is re-set per frame with a watchdog fall to silence, and the
+loops stop after 0.6 s of quiet. Loudness knobs are the constants at the top of
+the file; `INK_SFX_LEVEL` trims all of it.
+
+**Frame-exact captures.** `atelierDebug.clock.fixedStep = 1 / 60` advances the
+simulation one 60 fps step per rendered frame whatever the real rate, and
+`clock.frames` counts them — so a headless browser at ten frames a second shows
+every frame in slow motion. Playwright's fake clock does not work here; it stalls
+the render loop.
 
 **The room has aerial perspective**, and it exists to kill one line. Where the
 wall's top course meets the sky is the highest-contrast edge in the frame, and
@@ -845,7 +911,10 @@ one is not motion at all:
    towards a four-pointed glint — a hard core plus two crossed spikes, each
    rotated by the particle's own hash so the pool is not a field of plus signs.
    Built from the same quad: no extra geometry, no extra draw. Defaults to 0, so
-   every spell keeps the round sprite it was tuned against.
+   every spell keeps the round sprite it was tuned against. The trail has since
+   moved on from the glint to `square` + `stretch` — a hard bar smeared along its
+   own arc — which does the same job and keeps a solid core inside the bloom
+   where the spikes dissolved into it; lightning still uses the glint.
 2. **`growth` above zero.** A particle that swells over its life is a puff by
    definition. Now 0.
 3. **Rising.** Buoyancy upward gave the trail a column-of-smoke shape. It is
@@ -856,7 +925,9 @@ one is not motion at all:
 4. **Turbulence**, now 0.07. With a real arc to follow, the noise had nothing left
    to add but haze.
 5. **A `GLOW_COOL` of 1.4** — under the 1.15 the bloom opens at, so the tail of
-   every trail was a dim smear that lit nothing. Now 4.0.
+   every trail was a dim smear that lit nothing. It went to 4.0 against the old
+   0.22 alpha, and is 1.0 now that the sprite is solid — the same light on
+   screen, all of it over the threshold.
 
 `lifeSpan` is set from the arc rather than by feel: past 0.56 s a mote is below
 the paper, where the desk occludes it, so 1.0 s spends most of the life above the
@@ -919,9 +990,9 @@ Three mistakes on the way there, all worth not repeating:
 **The flare is fireflies, and the count is the whole trick.** `spawnRate` is a
 per-frame chance that a *dead* particle wakes, so it only means anything read
 against the pool and the window. The sweep lasts about 0.85 s —
-`INK_BURN_SECONDS` plus `LINGER`, some 51 frames — so the share of the 700-strong
-pool that wakes is `1 - (1 - rate)^51`. At the flare's first setting of 0.32 that
-is essentially all of it: 700 lights, which is a wall, not a swarm. At 0.01 it is
+`INK_BURN_SECONDS` plus `LINGER`, some 51 frames — so the share of the pool (1,400
+now, 700 when this was written) that wakes is `1 - (1 - rate)^51`. At the flare's
+first setting of 0.32 that is essentially all of it: a wall, not a swarm. At 0.01 it is
 about a third, and a sigil comes apart into points you can follow one at a time.
 Anything that changes the pool size, the burn length or `LINGER` changes what a
 given rate means.

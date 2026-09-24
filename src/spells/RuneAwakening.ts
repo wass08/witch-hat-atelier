@@ -353,13 +353,35 @@ export class RuneAwakening {
 				lifeSpan: 2.4,
 				attract: 0,
 				drift: new Vector3( 0, 0.15, 0 ),
-				size: 0.035,
+				// Eight millimetres keeps the embers small beside the pillars: a little
+				// under a quarter of the old width, with no late-life swelling to turn
+				// them into clouds. They hold a solid core, then shrink as they cool.
+				size: 0.008,
+				growth: 0,
 				buoyancy: 0.12,
 				damping: 0.35,
 
-				// Rides the charge, so the circle's motes come up as it wakes rather
-				// than arriving already lit.
-				glow: 1.5 + 4.5 * this.charge,
+				// Emission climbs from 3 to 10 with the charge. At full opacity the
+				// young cores cross the 1.15 bloom threshold individually, so they can
+				// be small without losing their light. Only 30% of the newborn tint
+				// goes towards white: the violet palette still colours the embers and
+				// their local halos as the circle reaches its brightest moment.
+				glow: 3 + 7 * this.charge,
+				whiteHot: 0.3,
+				halo: 0.1,
+				haloSize: 5,
+				square: 1,
+				sparkle: 0,
+				fadeSize: 1,
+				opacity: 1,
+
+				// Fifteen milliseconds of travel and a three-width cap only hint at
+				// the upward drift. A shallow independent pulse gives the embers life
+				// between the pillars without making the whole ring flash together.
+				stretch: 0.015,
+				streakMax: 3,
+				twinkle: 0.25,
+				twinkleRate: 3.2,
 
 				// The turbulence is what the links need to look alive: without it the
 				// motes rise in parallel and the web between them barely changes shape.

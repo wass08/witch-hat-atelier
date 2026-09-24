@@ -19,6 +19,7 @@ import { ScreenFlash } from './spells/ScreenFlash';
 import { WARD_SOUND, Ward } from './spells/Ward';
 import { Ambience } from './audio/Ambience';
 import { Chime } from './audio/Chime';
+import { InkSfx } from './audio/InkSfx';
 import { spellForGlyph, type SpellEffects } from './spells/registry';
 import { IDLE_GLOW, INK_BURN_SECONDS, RECOGNITION_THRESHOLD } from './config';
 import { Hud } from './ui/Hud';
@@ -36,6 +37,11 @@ async function main(): Promise<void> {
 	// room rather than a first frame that still has compiling left to do.
 	const ambience = new Ambience();
 	const chime = new Chime();
+
+	// The page's own sounds — the quill and the burn — on `Chime`'s context, so
+	// the gate's `prime` below unlocks them too. Until then `bus` is null and this
+	// does nothing, every frame, for free.
+	const inkSfx = new InkSfx( () => chime.bus );
 
 	const gate = hud.gate( () => {
 
@@ -525,11 +531,15 @@ async function main(): Promise<void> {
 
 	} );
 
+	/** See the frame loop: a fixed simulation step for frame-exact captures. */
+	const debugClock = { fixedStep: 0, frames: 0 };
+
 	if ( import.meta.env.DEV ) {
 
 		Object.assign( window, {
 			atelierDebug: {
-				renderer, scene, rig, ink, motes, atelier, recorder, effects, quill, post, resolution, ambience, chime,
+				clock: debugClock,
+				renderer, scene, rig, ink, motes, atelier, recorder, effects, quill, post, resolution, ambience, chime, inkSfx,
 				/** The matcher's internals, for tuning experiments. */
 				pdollar,
 				/**
@@ -849,7 +859,16 @@ async function main(): Promise<void> {
 		// is never handed back. Both were seen while instrumenting this scene, which
 		// is where a clock can be fed by hand; three's own `Timer` guards the same
 		// class of thing with the Page Visibility API.
-		const dt = Math.max( 0, Math.min( timer.getDelta(), 1 / 20 ) );
+		const real = Math.max( 0, Math.min( timer.getDelta(), 1 / 20 ) );
+
+		// Dev only: `atelierDebug.fixedStep = 1 / 60` runs the simulation on exactly
+		// that step per rendered frame, whatever the real frame rate. A headless
+		// capture at ten frames a second then sees every 60 fps frame in turn —
+		// slow motion, frame-exact — which is the only way to judge something that
+		// is out of step by a frame or two. `frames` counts them.
+		const dt = import.meta.env.DEV && debugClock.fixedStep > 0 ? debugClock.fixedStep : real;
+
+		if ( import.meta.env.DEV ) debugClock.frames ++;
 
 		// The cast sequence: the sigil lights up, then the camera goes, then the
 		// spell. Advanced before `rig.update` so the lean-out starts on the very
@@ -920,6 +939,11 @@ async function main(): Promise<void> {
 
 		// After the ink, so the front the motes read is this frame's.
 		motes.update( dt );
+
+		// …and after the motes, so the burn it hears is this frame's too. The nib
+		// only counts while it is on the paper: a hovering quill and a stroke that
+		// has run off the sheet are both silent.
+		inkSfx.update( dt, recorder.inking ? recorder.activePoint : null, recorder.stroke, motes.burn );
 
 		if ( profiling ) stage.ink += performance.now() - markInk;
 
